@@ -32,13 +32,36 @@ An **Experience** is the full data package for a playable instance. It bundles:
 
 ### World
 
-- Modeled as an **array of location entries**, each carrying environmental
-  codes (climate, hazards, conditions — exact schema deferred).
-- Classified by **type**:
-  - `narrative-bound` — fixed path
-  - `semi-open` — bounded freedom
-  - `open` — fully open
-  - *(Mechanics of each type deferred to a later pass.)*
+The world is a **fixed-size 2D grid of regions, each nesting one or more
+nodes** (the actual visitable locations). Schema defined in
+`src/data/schemas/world.ts` (Zod).
+
+- **Region** — a grid cell, the macro unit of travel. Has a `position {x, y}`
+  on the world grid, its own `worldType`, and nests an array of `nodes`.
+  - `worldType` — `narrative-bound` (fixed path), `semi-open` (bounded
+    freedom), or `open` (fully open). *(Mechanics of each type deferred.)*
+- **Node** — a single visitable location nested inside a region. Carries a
+  `localPosition {x, y}` within the region's **unbounded** local sub-grid (no
+  declared sub-grid size), and an optional `layer` (z-index) to disambiguate
+  multiple nodes stacked at the same local position (e.g. surface vs.
+  basement).
+- **Edge** — a connection from one node to another (`targetNodeId`).
+  Direction between nodes is **computed**, not authored — every node has an
+  effective world-space position (`region.position` combined with
+  `node.localPosition`), so `scope/` derives direction (north/south/etc.) the
+  same way at both the region level and the node level. An edge's optional
+  `direction` field is only an override, for non-geometric links (e.g. a
+  portal) where computed direction wouldn't make narrative sense.
+- **Why direction is engine-computed, not AI-inferred:** LLMs are unreliable
+  at consistent spatial reasoning across a long session. Direction must be a
+  fact `scope/` hands the AI, never something left for the AI to work out or
+  remember on its own.
+- Environmental codes (climate, hazards, conditions) can be set at the region
+  level and overridden per-node — exact code vocabulary still deferred.
+- World-level data integrity is enforced at validation time: region positions
+  must fall within the world's bounds, region and node IDs must be unique
+  (node IDs globally, since edges can cross regions), and every edge must
+  resolve to a real node.
 
 ### Characters
 
@@ -208,11 +231,12 @@ detected capability.
 
 ## Open / Deferred
 
-- World environmental code schema
+- World environmental code vocabulary/schema
 - Mechanics of `narrative-bound` / `semi-open` / `open` world types
 - DTM storage format and query interface
 - Initial `tools/` check/action set definitions
-- Data file format for Experience packages (JSON, YAML, etc.)
+- Data file format for Character/Ruleset/other Experience content (world data
+  uses JSON + Zod, per `src/data/schemas/world.ts` — other content types TBD)
 - Confirmed job-to-model mapping at each tier (1–5)
 - Engine constant configuration schema (global cap + per-job overrides)
 - Hardware capability detection method
