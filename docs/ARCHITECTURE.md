@@ -1,8 +1,10 @@
 # Architecture Document: Genesis Infinity
 
-> **Status:** concept — engine not yet implemented. Captures the architecture
-> decisions made so far. Several details are intentionally deferred (marked
-> below) and will be expanded in later passes.
+> **Status:** a beta vertical slice is implemented (see **Beta Implementation**
+> below) — every layer exists end-to-end behind a CLI, running on a single
+> local model. The rest of this document still describes the full target
+> design; sections below are the concept-level spec, and the beta section
+> notes where the current build narrows or defers part of that spec.
 
 ## Core Design Principle
 
@@ -187,8 +189,11 @@ an event-sourcing pattern — DTM is the single source of truth.
   Indexed on `experience_id`, `timestamp`, `entity_id`, and `type` for the
   query patterns `state/` and `ai/` summarization need (e.g. "everything
   for this character since timestamp X").
-- **Query interface** (client library/ORM to read/write this table from
-  TypeScript) is not yet chosen — separate decision, deferred below.
+- **Query interface:** `src/dtm/index.ts`'s `Dtm` class wraps Node's built-in
+  `node:sqlite` (`DatabaseSync`) directly — no ORM. Exposes `append`,
+  `allForExperience`, `forEntity`, `recent`, and `lastPosition` (the last
+  position-bearing event for an entity, used by `state/` to derive current
+  location).
 
 ### State
 
@@ -234,6 +239,12 @@ or mechanical action, similar to how Claude Code inspects before acting.
    `X` calls.
    - `X` is a setting on the Experience package, not a global constant — a
      simple Experience can cap low, a complex one can allow more.
+   - **Beta deviation:** the cap is not enforced. `ai/` uses
+     node-llama-cpp's `session.prompt({functions})`, which drives the whole
+     check-tool loop internally with no hook to count or cap rounds. Beta
+     ships without manual round-counting, relying on the model's own
+     judgment and the implicit token budget; revisit if it loops badly once
+     there's a model to test against.
 3. The model commits to either narration, or an **action tool** call (write
    — move, attack, etc.).
 4. Tool-call output is **syntax/structure validated** before reaching
@@ -313,6 +324,113 @@ detected capability.
 
 ---
 
+## Beta Implementation
+
+A working vertical slice exists end-to-end: every engine layer in the
+diagram above is built, wired together, and playable via a CLI. This section
+documents what's actually implemented and where it narrows the concept-level
+design above for beta scope.
+
+### Scope
+
+- **Model loading:** Tier 1 only — a single local model, loaded once via
+  `node-llama-cpp`, handles narrative, tool-call decisions, and rule
+  validation. The Tier 2–5 specialized-model split and the SAL/MML loading
+  strategies above are not implemented; beta always loads one model and
+  keeps it resident for the session.
+- **Model backend:** `node-llama-cpp`, pointed at a user-supplied local GGUF
+  model path (`--model <path>` CLI arg). No other backend is wired in.
+- **Package manager / runtime:** npm, TypeScript executed via `tsx` (no
+  build step in beta).
+
+### Engine layers, as built
+
+- **`data/`** (`src/data/`) — Zod schemas (`schemas/`) and loaders
+  (`loaders/`) for `Experience`, `World`, and `CharacterSheet`, per the
+  Experience Model and World sections above. `loadExperience(dir)` reads
+  `experience.json`, `world.json`, and `characters/*.json` from an
+  Experience directory and resolves the ruleset per the fallback rules
+  described above.
+  - **Character starting positions:** `ExperienceSchema` gained a
+    `characters: CharacterPlacementSchema[]` field
+    (`{characterId, startingNodeId}`), since `state/` needs a fallback
+    position before any `entity.moved` dtm event exists for a character.
+- **`dtm/`** (`src/dtm/index.ts`) — implements the `dtm_events` schema above
+  via `node:sqlite`'s `DatabaseSync`, with no ORM (see DTM section above for
+  the resolved query interface).
+- **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded)` returns a
+  `StateSnapshot`: every character's sheet plus current `nodeId`, derived by
+  reading each character's most recent position-bearing dtm event
+  (`dtm.lastPosition`), falling back to the Experience's declared
+  `startingNodeId` if none exists yet. Confirms the "state is a derived
+  view, never independently stored" principle above.
+- **`scope/`** (`src/scope/index.ts`) — `getScope(world, state, characterId)`
+  returns a character's current node (merged environmental codes per the
+  node-overrides-region rule above, and connections with **computed**
+  direction), plus which other characters are co-located
+  (`othersPresent`). Direction is an 8-point compass computed from
+  same-region local-position deltas, or region-position deltas when
+  comparing nodes across regions (local sub-grids are unbounded and not
+  comparable cross-region); two nodes at the same position on different
+  layers resolve to `"up"`/`"down"`. An edge's authored `direction`
+  override, when present, still wins over the computed value.
+- **`tools/`** (`src/tools/index.ts`) — the beta check + action tool set:
+  - `get_scope` (check) — wraps `scope/`'s `getScope`.
+  - `get_character_sheet` (check) — looks up a loaded character's sheet.
+  - `get_recent_dtm` (check) — wraps `dtm.recent`.
+  - `move` (action) — validates the target node is reachable (connected by
+    an edge) from the character's current node, then appends an
+    `entity.moved` event to `dtm/`. Returns `{success: false, reason}`
+    rather than throwing on an invalid target.
+- **`rules/`** (`src/rules/index.ts`) — `RuleValidator` implements the
+  "separate validation prompt" approach: its own `LlamaChatSession` on a
+  dedicated `LlamaContextSequence` (sharing the loaded model/context with
+  the narrative session, but not its chat history), reset before every
+  call so each validation is stateless. The model's response is forced into
+  `{valid: boolean, reason: string}` via a grammar built from
+  `llama.createGrammarForJsonSchema`. Currently only `ai/`'s `move` handler
+  calls it, ahead of invoking `tools/`'s `move`.
+- **`ai/`** (`src/ai/index.ts`) — `createAiSession(...)` loads the model,
+  opens one `LlamaContext`, and draws two sequences from it: one for the
+  narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`. Declares
+  the four tools above via `defineChatSessionFunction` and drives the
+  agentic loop through `session.prompt(input, {functions})` (see the Turn
+  Flow beta deviation above re: the uncapped loop). Each tool handler is
+  wrapped by a `record()` helper that invokes an optional
+  `onToolCall?: (call) => void` callback — this is how `io/`'s debug-dump
+  mode observes tool calls without `ai/` depending on `io/`.
+- **`core/`** (`src/core/index.ts`) — `createEngine(options)` assembles a
+  playable Experience: loads data, opens `dtm/`, starts the `ai/` session,
+  and exposes `takeTurn(input)`, which increments a per-turn timestamp
+  counter and forwards to `ai/`. This counter is "engine time" per the DTM
+  section above — a simple incrementing count, not wall-clock time.
+- **`io/`** (`src/io/cli.ts`) — a CLI chat loop (`npm run play`) combining
+  play and an AI-perception inspector:
+  `--experience <dir> --model <path> --character <id> [--db <path>] [--debug]`.
+  With `--debug`, prints the named character's `scope/` view before and
+  after each turn, plus every tool call made during that turn.
+  - **Player-character identification:** `ExperienceSchema` has no
+    `mode`/`playerCharacterId` field yet (per the Open/Deferred "mode"
+    item below); `io/` takes `--character <id>` as a CLI argument instead,
+    keeping this a runtime/session concern rather than Experience-authored
+    data.
+
+### Test Experience: Goku vs Venom — Null Void Showdown
+
+`examples/goku-vs-venom/` is the smoke-test fixture for the beta slice: Goku
+and Venom (D&D-range stats, 10–20) placed in Ben 10's Null Void dimension —
+one `open`-type region (`null-void-expanse`) with two connected nodes
+(`battlefield-core`, `drifting-wreckage`). The Experience declares no custom
+abilities/skills, exercising the default-ruleset fallback path. Verified via
+ad hoc scripts (not a checked-in test suite yet) that `loadExperience`,
+`getState`, `getScope`, and `moveTool` interoperate correctly: starting
+positions resolve from the Experience's declared placements, scope reports
+correct connections/direction/`othersPresent`, a valid move updates `dtm/`
+and is reflected in the next `getState`/`getScope` call, and an invalid
+move target fails gracefully instead of throwing.
+
+---
+
 ## Platform & Language
 
 - **Language:** TypeScript, for cross-platform deployment (web, desktop,
@@ -328,10 +446,14 @@ detected capability.
 
 ## Open / Deferred
 
-- DTM query interface (client library/ORM choice for the SQLite schema above)
 - Generated-content store format/interface (AI-authored plot points/NPC
   stories in `open` worlds — separate from `dtm/`)
-- Initial `tools/` check/action set definitions
+- Bounded check-tool-call loop (the `X` cap in Turn Flow) — not enforced in
+  the beta `ai/` implementation, see Beta Implementation above
+- `mode` / `playerCharacterId` on `ExperienceSchema` — beta resolves player
+  identification via a CLI arg instead, see Beta Implementation above
+- Tier 2–5 specialized-model splits and the SAL/MML loading strategies —
+  beta only implements Tier 1 (single model)
 - Data file format for Ruleset/other Experience content (world data uses
   JSON + Zod per `src/data/schemas/world.ts`; character mechanical data uses
   JSON + Zod per `src/data/schemas/character.ts` — other content types TBD)
