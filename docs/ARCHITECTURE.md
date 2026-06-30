@@ -165,6 +165,32 @@ models intended for local/llama.cpp execution):
   checks to make) degrades at small-model scale — the bounded loop (`X` cap)
   exists in part to keep this reliable across model sizes.
 
+### Model Loading: SAL & MML
+
+The tier system above defines *how many model roles* exist. Separately, the
+engine needs a strategy for *how those roles are backed in memory* —
+multiple specialized models don't require multiple models loaded at once.
+
+- **SAL (Smart Auto Loading)** — one model resident at a time. Model A loads,
+  performs its job (e.g. reasoning/validation/tool-calling), hands its output
+  to the engine as context, then unloads. Model B then loads, picks up that
+  context, and performs its job (e.g. narrative). The engine brokers the
+  handoff — it already mediates everything between AI and state, so passing
+  context between sequential loads is a natural extension of that role.
+  Trades load/unload latency for enabling multi-model specialization on
+  hardware that can't hold multiple models in RAM at once (constrained,
+  offline, mobile).
+- **MML (Multi Model Loading)** — multiple models loaded simultaneously, each
+  its own instance, running in parallel. No swap overhead, but requires
+  enough RAM/VRAM to hold all of them at once. Primarily backend/server, but
+  usable offline too if hardware allows.
+
+**Selection is automatic by default, overridable by engine constant** — same
+pattern as the tier cap and the per-job `rules/` override. By default the
+engine detects available RAM against cumulative model footprint and picks SAL
+or MML accordingly; an engine constant can force one strategy regardless of
+detected capability.
+
 ---
 
 ## Platform & Language
@@ -190,3 +216,5 @@ models intended for local/llama.cpp execution):
 - Confirmed job-to-model mapping at each tier (1–5)
 - Engine constant configuration schema (global cap + per-job overrides)
 - Hardware capability detection method
+- RAM/VRAM threshold logic for automatic SAL vs MML selection
+- Context handoff format passed between models in SAL
