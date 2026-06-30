@@ -88,28 +88,82 @@ not in scope yet.)
 
 ```
 io/          chat interface (input/output)
-core/        turn loop, session/event dispatch
+core/        turn loop — drives the check → act → narrate cycle
+scope/       computes what's in-scope for the AI this turn, based on settings
+             and the character's current location (drives immersion)
 dtm/         append-only timestamped log: every change, every entity/item position
 state/       current snapshot, derived from dtm/
 data/        loads world/rules/content from data files
-rules/       validates tool calls against constraints + dtm/state before they apply
-ai/          builds prompts (scene/tone), exposes tool definitions, character summarization
-tools/       the defined action set (move, attack, check_stat, etc.) the AI can invoke
+rules/       validates action-tool calls against constraints + dtm/state
+ai/          drives the agentic loop, builds prompts (scene/tone), character
+             summarization
+tools/       check tools (read-only) + action tools (write) the AI can invoke
 ```
 
 ## Turn Flow
 
-1. `ai/` builds the scene/tone context and sends it to the model along with
-   available tool definitions.
-2. The model replies with narration and, optionally, a tool call.
-3. `rules/` validates the tool call against current `state/`, `dtm/` history,
+Genesis Infinity uses an **agentic loop**, not a single-shot prompt/response —
+the AI can ground itself via read-only checks before committing to narrative
+or mechanical action, similar to how Claude Code inspects before acting.
+
+1. `scope/` computes what's currently visible/relevant to the AI: the
+   character's location, what's around them, applicable rules, and which
+   tools are contextually available.
+2. `ai/` drives a **bounded loop**: the model may call **check tools**
+   (read-only — query state, rules, dtm, character data) up to a maximum of
+   `X` calls.
+   - `X` is a setting on the Experience package, not a global constant — a
+     simple Experience can cap low, a complex one can allow more.
+3. The model commits to either narration, or an **action tool** call (write
+   — move, attack, etc.).
+4. Tool-call output is **syntax/structure validated** before reaching
+   `rules/`. For local models this leans on grammar-constrained decoding
+   (e.g. llama.cpp GBNF) to force valid structure at generation time; engine-
+   side validation catches the rest regardless of model.
+5. `rules/` validates the action against current `state/`, `dtm/` history,
    and the Experience's data constraints.
-4. If valid: `core/` applies the action, the change is written to `dtm/`, and
+6. If valid: `core/` applies the action, the change is written to `dtm/`, and
    `state/` reflects it as a derived view.
-5. If invalid: the AI is told why, and must adjust its response.
+7. If invalid: the AI is told why, and must adjust its response.
 
 This keeps the engine as the authority over every change — the AI cannot alter
 game state directly, only propose actions through `tools/`.
+
+---
+
+## AI Orchestration & Model Allocation
+
+The number of models used to run an Experience **scales with hardware
+capability**, from 1 up to 5:
+
+- **Tier 1 (constrained hardware)** — a single small model handles every job
+  in sequence: narrative, tool-call/check decisions, summarization, scope
+  description.
+- **Tier 5 (capable hardware)** — each job runs on its own specialized model.
+  Candidate split (to be confirmed as jobs are implemented):
+  1. Narrative/prose — storytelling, character voice
+  2. Tool-call/check decisions — agentic loop control
+  3. Character summarization — background story digestion (from DTM)
+  4. Scope/immersion description — environmental detail
+  5. Rule/constraint reasoning — see note below
+
+**Hardware sets the ceiling; engine constants set the operating point.**
+Capability detection determines the maximum feasible tier, but:
+- A **global engine constant** can cap the tier below what hardware could
+  support (e.g. force fewer models even on capable hardware).
+- **Per-job constants** can override independently of the global tier — e.g.
+  `rules/` can be pinned to deterministic-only (no model involved) regardless
+  of how many models everything else is using.
+
+**Small/offline model considerations** (e.g. Mistral, Gemma, Phi-mini class
+models intended for local/llama.cpp execution):
+- These models vary in strength by job — e.g. Phi-mini-class models tend to
+  be stronger at structured tool-calling than at narrative prose. This is
+  part of the motivation for splitting jobs across specialized models at
+  higher tiers, rather than asking one small model to do everything well.
+- Open-ended self-directed looping (the model deciding for itself how many
+  checks to make) degrades at small-model scale — the bounded loop (`X` cap)
+  exists in part to keep this reliable across model sizes.
 
 ---
 
@@ -131,5 +185,8 @@ game state directly, only propose actions through `tools/`.
 - World environmental code schema
 - Mechanics of `narrative-bound` / `semi-open` / `open` world types
 - DTM storage format and query interface
-- Initial `tools/` action set definitions
+- Initial `tools/` check/action set definitions
 - Data file format for Experience packages (JSON, YAML, etc.)
+- Confirmed job-to-model mapping at each tier (1–5)
+- Engine constant configuration schema (global cap + per-job overrides)
+- Hardware capability detection method
