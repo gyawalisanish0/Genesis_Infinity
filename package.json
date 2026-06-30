@@ -1,0 +1,20 @@
+{
+  "name": "genesis-infinity",
+  "version": "0.1.0",
+  "description": "AI RPG engine.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "play": "tsx src/io/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "node-llama-cpp": "^3",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "tsx": "^4",
+    "typescript": "^5"
+  }
+}

@@ -5,7 +5,7 @@ import {
   DEFAULT_SKILLS,
   type AbilityDef,
   type SkillDef,
-} from "../schemas/character";
+} from "../schemas/character.js";
 
 /**
  * Resolves an Experience's declared ability list against the D&D-style
