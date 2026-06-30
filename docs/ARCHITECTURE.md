@@ -81,6 +81,23 @@ nodes** (the actual visitable locations). Schema defined in
 - **Personality** and **tone** — drive how the AI voices the character.
 - **Plot points**, timecoded — a timeline of character-specific narrative beats.
 - **Stats and skills** — the mechanical layer, used by `rules/` for checks.
+  Defined as a `CharacterSheet` in `src/data/schemas/character.ts` (Zod),
+  separate from the narrative fields above (combined into a full Character
+  entity in a later pass):
+  - **Abilities** — D&D-style baseline (STR/DEX/CON/INT/WIS/CHA) provided as
+    a template (`DEFAULT_ABILITIES`), but overridable/extensible per
+    Experience — not a fixed enum.
+  - **Skills** — D&D-style baseline list (~18 skills, each referencing a
+    governing ability id) provided as a template (`DEFAULT_SKILLS`), also
+    overridable/extensible per Experience.
+  - **Class / race / background** — open strings, not fixed enums, so
+    non-fantasy settings aren't forced into D&D-specific content.
+  - **No derived-stat formulas** — ability scores, skill values, hit points,
+    and armor class are all raw stored values. There's no D&D-style
+    modifier/proficiency formula baked into the schema; if `rules/` needs a
+    derived value, it computes one at resolution time.
+  - Validation: ability and skill IDs must be unique within a sheet, and a
+    skill's `governingAbilityId` must reference a real ability on that sheet.
 
 ### Narrative / Plot Points
 
@@ -247,8 +264,11 @@ detected capability.
 - Mechanics of `narrative-bound` / `semi-open` / `open` world types
 - DTM storage format and query interface
 - Initial `tools/` check/action set definitions
-- Data file format for Character/Ruleset/other Experience content (world data
-  uses JSON + Zod, per `src/data/schemas/world.ts` — other content types TBD)
+- Data file format for Ruleset/other Experience content (world data uses
+  JSON + Zod per `src/data/schemas/world.ts`; character mechanical data uses
+  JSON + Zod per `src/data/schemas/character.ts` — other content types TBD)
+- Full Character entity combining CharacterSheet (stats/skills) with the
+  narrative fields (personality, tone, timecoded plot points)
 - Confirmed job-to-model mapping at each tier (1–5)
 - Engine constant configuration schema (global cap + per-job overrides)
 - Hardware capability detection method
