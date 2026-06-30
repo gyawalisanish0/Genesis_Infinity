@@ -1,12 +1,14 @@
 import { loadExperience, type LoadedExperience } from "../data/loaders/experience.js";
 import { Dtm } from "../dtm/index.js";
-import { createAiSession } from "../ai/index.js";
+import { createAiSession, type ToolCallRecord } from "../ai/index.js";
 import type { ToolContext } from "../tools/index.js";
 
 export interface EngineOptions {
   experienceDir: string;
   dbPath: string;
   modelPath: string;
+  /** Called after each tool call resolves — used by io/'s debug-dump mode. */
+  onToolCall?: (call: ToolCallRecord) => void;
 }
 
 export interface Engine {
@@ -41,6 +43,7 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
     modelPath: options.modelPath,
     toolCtx,
     systemPrompt: buildSystemPrompt(loaded),
+    onToolCall: options.onToolCall,
   });
 
   let timestamp = 0;

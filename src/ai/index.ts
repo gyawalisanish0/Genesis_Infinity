@@ -9,10 +9,18 @@ import { getScopeTool, getCharacterSheetTool, getRecentDtmTool, moveTool } from 
 import { RuleValidator } from "../rules/index.js";
 import { getState } from "../state/index.js";
 
+export interface ToolCallRecord {
+  name: string;
+  params: unknown;
+  result: unknown;
+}
+
 export interface AiSessionOptions {
   modelPath: string;
   toolCtx: ToolContext;
   systemPrompt: string;
+  /** Called after each tool call resolves — used by io/'s debug-dump mode. */
+  onToolCall?: (call: ToolCallRecord) => void;
 }
 
 export interface AiSession {
@@ -39,6 +47,11 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
   const turn = { timestamp: 0 };
 
+  function record<Params, Result>(name: string, params: Params, result: Result): Result {
+    options.onToolCall?.({ name, params, result });
+    return result;
+  }
+
   const functions: ChatSessionModelFunctions = {
     get_scope: defineChatSessionFunction({
       description:
@@ -48,7 +61,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         type: "object",
         properties: { characterId: { type: "string" } },
       },
-      handler: (params) => getScopeTool(options.toolCtx, params),
+      handler: (params) => record("get_scope", params, getScopeTool(options.toolCtx, params)),
     }),
     get_character_sheet: defineChatSessionFunction({
       description: "Get a character's static sheet: identity, abilities, and skills.",
@@ -56,7 +69,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         type: "object",
         properties: { characterId: { type: "string" } },
       },
-      handler: (params) => getCharacterSheetTool(options.toolCtx, params),
+      handler: (params) =>
+        record("get_character_sheet", params, getCharacterSheetTool(options.toolCtx, params)),
     }),
     get_recent_dtm: defineChatSessionFunction({
       description: "Get the most recent events from this Experience's history log.",
@@ -64,7 +78,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         type: "object",
         properties: { limit: { type: "number" } },
       },
-      handler: (params) => getRecentDtmTool(options.toolCtx, params),
+      handler: (params) =>
+        record("get_recent_dtm", params, getRecentDtmTool(options.toolCtx, params)),
     }),
     move: defineChatSessionFunction({
       description: "Move a character to a connected node.",
@@ -86,13 +101,17 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           state,
         );
         if (!validation.valid) {
-          return { success: false, reason: validation.reason };
+          return record("move", params, { success: false, reason: validation.reason });
         }
-        return moveTool(options.toolCtx, {
-          characterId: params.characterId,
-          targetNodeId: params.targetNodeId,
-          timestamp: turn.timestamp,
-        });
+        return record(
+          "move",
+          params,
+          moveTool(options.toolCtx, {
+            characterId: params.characterId,
+            targetNodeId: params.targetNodeId,
+            timestamp: turn.timestamp,
+          }),
+        );
       },
     }),
   };
