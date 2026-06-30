@@ -99,6 +99,28 @@ nodes** (the actual visitable locations). Schema defined in
   - Validation: ability and skill IDs must be unique within a sheet, and a
     skill's `governingAbilityId` must reference a real ability on that sheet.
 
+#### Ruleset Declaration & Fallback
+
+An Experience can declare its own ability/skill *definitions* (id + name,
+and for skills, an optional `governingAbilityId`) — this is the ruleset
+template a character's abilities/skills draw their ids from, distinct from
+a character's own stored scores/values.
+
+- Schema: `ExperienceSchema` in `src/data/schemas/experience.ts` (Zod),
+  currently scoped to just `abilities`/`skills` declarations — the full
+  Experience model (world, characters, rulesets, mode) is deferred.
+- Resolution is **per-entry fallback**, in `src/data/loaders/character.ts`:
+  each declared ability/skill entry is validated individually; an invalid
+  or duplicate-id entry is dropped rather than failing the whole list. Any
+  default id (`DEFAULT_ABILITIES` / `DEFAULT_SKILLS`) missing from the
+  resolved set is filled in from the default. A skill entry whose
+  `governingAbilityId` doesn't match any resolved ability id is also
+  treated as broken and dropped.
+- This keeps the ruleset truly data-driven (an Experience can fully
+  override or extend the D&D baseline) while guaranteeing a usable,
+  internally-consistent result even if part of the declared data is
+  malformed.
+
 ### Narrative / Plot Points
 
 Plot points vary along two independent axes:

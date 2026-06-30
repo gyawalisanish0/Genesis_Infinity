@@ -1,6 +1,29 @@
 import { z } from "zod";
 
 /**
+ * Shape of an ability *definition* (id + name only — no score). This is
+ * what an Experience declares as part of its ruleset; actual character
+ * data (AbilityScoreSchema) adds a score on top of one of these.
+ */
+export const AbilityDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type AbilityDef = z.infer<typeof AbilityDefSchema>;
+
+/**
+ * Shape of a skill *definition* (id + name + optional governing ability id
+ * — no value). What an Experience declares as part of its ruleset; actual
+ * character data (SkillSchema) adds a value on top of one of these.
+ */
+export const SkillDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  governingAbilityId: z.string().optional(),
+});
+export type SkillDef = z.infer<typeof SkillDefSchema>;
+
+/**
  * D&D-style baseline. Experiences can use this as-is, override individual
  * entries, or add entirely custom abilities — CharacterSheetSchema does not
  * enforce this list, it's just a starting template for content authors.
