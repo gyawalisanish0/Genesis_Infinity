@@ -54,12 +54,13 @@ function layerDirection(fromLayer: number | undefined, toLayer: number | undefin
   return "here";
 }
 
-interface NodeLocation {
+export interface NodeLocation {
   region: Region;
   node: Node;
 }
 
-function findNode(world: World, nodeId: string): NodeLocation {
+/** Finds a node and its parent region anywhere in the world, by node id. */
+export function findNode(world: World, nodeId: string): NodeLocation {
   for (const region of world.regions) {
     const node = region.nodes.find((n) => n.id === nodeId);
     if (node) return { region, node };
