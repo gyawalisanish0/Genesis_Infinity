@@ -39,7 +39,7 @@ nodes** (the actual visitable locations). Schema defined in
 - **Region** — a grid cell, the macro unit of travel. Has a `position {x, y}`
   on the world grid, its own `worldType`, and nests an array of `nodes`.
   - `worldType` — `narrative-bound` (fixed path), `semi-open` (bounded
-    freedom), or `open` (fully open). *(Mechanics of each type deferred.)*
+    freedom), or `open` (fully open). See **World Type Mechanics** below.
 - **Node** — a single visitable location nested inside a region. Carries a
   `localPosition {x, y}` within the region's **unbounded** local sub-grid (no
   declared sub-grid size), and an optional `layer` (z-index) to disambiguate
@@ -75,6 +75,25 @@ nodes** (the actual visitable locations). Schema defined in
   must fall within the world's bounds, region and node IDs must be unique
   (node IDs globally, since edges can cross regions), and every edge must
   resolve to a real node.
+
+#### World Type Mechanics
+
+- **`narrative-bound`** — linear progression, driven heavily by
+  timestamp/trigger-based plot points (the firing-mechanism axis from
+  **Narrative / Plot Points** below). Day/night cycle is a per-Experience
+  config choice: some narrative-bound Experiences run one, others have none
+  at all (time is effectively static/frozen throughout) — not a runtime
+  pause, just an authoring decision.
+- **`semi-open`** — bounded freedom: branching plot points (multiple paths/
+  outcomes, not a single fixed line), with an active day/night cycle.
+- **`open`** — fully open: no fixed plot, the player can act freely for as
+  long as the character is alive. The AI can generate new plot points and
+  NPC stories on the fly. Once generated, these are written once to a
+  **separate generated-content store** (distinct from `dtm/`, queried by
+  `data/` alongside authored content) so they're available for consistency/
+  reference in later turns — but they remain **soft-coded**: the AI keeps
+  interpretive freedom around them going forward, the store isn't a hard
+  lock-in the way a hardcoded plot point is.
 
 ### Characters
 
@@ -283,8 +302,9 @@ detected capability.
 
 ## Open / Deferred
 
-- Mechanics of `narrative-bound` / `semi-open` / `open` world types
 - DTM storage format and query interface
+- Generated-content store format/interface (AI-authored plot points/NPC
+  stories in `open` worlds — separate from `dtm/`)
 - Initial `tools/` check/action set definitions
 - Data file format for Ruleset/other Experience content (world data uses
   JSON + Zod per `src/data/schemas/world.ts`; character mechanical data uses
