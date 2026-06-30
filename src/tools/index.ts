@@ -16,10 +16,27 @@ export interface ToolContext {
   loaded: LoadedExperience;
 }
 
-export interface MoveResult {
+/** A proposed action, as committed to by the AI this turn (see ai/). */
+export type Action =
+  | { type: "move"; characterId: string; targetNodeId: string; timestamp: number }
+  | {
+      type: "use_technique";
+      characterId: string;
+      techniqueId: string;
+      targetId?: string;
+      timestamp: number;
+    };
+
+export interface ActionCheck {
+  allowed: boolean;
+  reason?: string;
+}
+
+export interface ActionResult {
   success: boolean;
   reason?: string;
   nodeId?: string;
+  techniqueId?: string;
 }
 
 /** Check tool: the AI-visible scope (location, environment, connections, who's present) for a character. */
@@ -45,41 +62,104 @@ export function getRecentDtmTool(ctx: ToolContext, params: { limit: number }): D
   return ctx.dtm.recent(ctx.loaded.experience.id, params.limit);
 }
 
-/**
- * Action tool: moves a character to a target node, recording an
- * "entity.moved" dtm event. Only checks that the target is reachable via an
- * edge from the character's current node — mechanical/narrative legality
- * beyond that is rules/'s job, applied by whoever wires this tool into the
- * agentic loop before calling it (see ai/, docs/ARCHITECTURE.md Turn Flow).
- */
-export function moveTool(
+function checkMove(
   ctx: ToolContext,
-  params: { characterId: string; targetNodeId: string; timestamp: number },
-): MoveResult {
+  action: Extract<Action, { type: "move" }>,
+): ActionCheck {
   const state = getState(ctx.dtm, ctx.loaded);
-  const character = state.characters.find((c) => c.sheet.id === params.characterId);
+  const character = state.characters.find((c) => c.sheet.id === action.characterId);
   if (!character) {
-    return { success: false, reason: `Character "${params.characterId}" not found` };
+    return { allowed: false, reason: `Character "${action.characterId}" not found` };
   }
 
   const from = findNode(ctx.world, character.nodeId);
   const isConnected = from.node.connections.some(
-    (edge) => edge.targetNodeId === params.targetNodeId,
+    (edge) => edge.targetNodeId === action.targetNodeId,
   );
   if (!isConnected) {
     return {
-      success: false,
-      reason: `"${params.targetNodeId}" is not reachable from "${character.nodeId}"`,
+      allowed: false,
+      reason: `"${action.targetNodeId}" is not reachable from "${character.nodeId}"`,
     };
   }
 
+  return { allowed: true };
+}
+
+function applyMove(ctx: ToolContext, action: Extract<Action, { type: "move" }>): ActionResult {
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,
-    timestamp: params.timestamp,
+    timestamp: action.timestamp,
     type: "entity.moved",
-    entityId: params.characterId,
-    nodeId: params.targetNodeId,
+    entityId: action.characterId,
+    nodeId: action.targetNodeId,
   });
+  return { success: true, nodeId: action.targetNodeId };
+}
 
-  return { success: true, nodeId: params.targetNodeId };
+/**
+ * Hard capability gate: a character may only attempt a technique that
+ * appears on their sheet. Checked structurally, before the attempt ever
+ * reaches rules/ — this is not a model judgment call.
+ */
+function checkUseTechnique(
+  ctx: ToolContext,
+  action: Extract<Action, { type: "use_technique" }>,
+): ActionCheck {
+  const sheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
+  if (!sheet) {
+    return { allowed: false, reason: `Character "${action.characterId}" not found` };
+  }
+
+  const knowsTechnique = sheet.techniques.some((t) => t.id === action.techniqueId);
+  if (!knowsTechnique) {
+    return {
+      allowed: false,
+      reason: `"${sheet.name}" does not know a technique called "${action.techniqueId}"`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+function applyUseTechnique(
+  ctx: ToolContext,
+  action: Extract<Action, { type: "use_technique" }>,
+): ActionResult {
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: action.timestamp,
+    type: "technique.used",
+    entityId: action.characterId,
+    payload: { techniqueId: action.techniqueId, targetId: action.targetId },
+  });
+  return { success: true, techniqueId: action.techniqueId };
+}
+
+/**
+ * Structural/capability pre-check for a proposed action — reachability for
+ * move, "does the character actually know this" for use_technique. This is
+ * the hard gate: failing it means the action never reaches rules/ at all
+ * (see ai/, docs/ARCHITECTURE.md Turn Flow).
+ */
+export function checkAction(ctx: ToolContext, action: Action): ActionCheck {
+  switch (action.type) {
+    case "move":
+      return checkMove(ctx, action);
+    case "use_technique":
+      return checkUseTechnique(ctx, action);
+  }
+}
+
+/**
+ * Applies an action that has already passed checkAction and rules/
+ * validation — writes the resulting dtm event.
+ */
+export function applyAction(ctx: ToolContext, action: Action): ActionResult {
+  switch (action.type) {
+    case "move":
+      return applyMove(ctx, action);
+    case "use_technique":
+      return applyUseTechnique(ctx, action);
+  }
 }

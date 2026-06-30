@@ -378,25 +378,46 @@ design above for beta scope.
   - `get_scope` (check) — wraps `scope/`'s `getScope`.
   - `get_character_sheet` (check) — looks up a loaded character's sheet.
   - `get_recent_dtm` (check) — wraps `dtm.recent`.
-  - `move` (action) — validates the target node is reachable (connected by
-    an edge) from the character's current node, then appends an
-    `entity.moved` event to `dtm/`. Returns `{success: false, reason}`
-    rather than throwing on an invalid target.
+  - `action` (action) — a single tool with a discriminated-union payload
+    (`{type: "move", ...}` or `{type: "use_technique", ...}`), rather than
+    one tool per action type. Two functions are exported per action type
+    and dispatched by `checkAction`/`applyAction`:
+    - `checkAction` — a deterministic, structural pre-check that runs
+      **before** `rules/` is ever invoked, and can reject without any
+      model call. For `move`, this is reachability (is the target node
+      connected to the character's current node). For `use_technique`,
+      this is the hard capability gate: the character's sheet must list
+      the technique in its `techniques` array, or the action is rejected
+      immediately with a reason (e.g. `"Son Goku" does not know a
+      technique called "hakai"`) — an unknown technique never reaches
+      `rules/` for a legality judgment, since knowing/not-knowing a
+      technique isn't a judgment call.
+    - `applyAction` — runs only after both `checkAction` and `rules/`
+      approve, and appends the resulting dtm event (`entity.moved` for
+      `move`, `technique.used` with a `{techniqueId, targetId}` payload
+      for `use_technique`).
+    Both return `{success: false, reason}`/`{allowed: false, reason}`
+    rather than throwing on a rejected action.
 - **`rules/`** (`src/rules/index.ts`) — `RuleValidator` implements the
   "separate validation prompt" approach: its own `LlamaChatSession` on a
   dedicated `LlamaContextSequence` (sharing the loaded model/context with
   the narrative session, but not its chat history), reset before every
   call so each validation is stateless. The model's response is forced into
   `{valid: boolean, reason: string}` via a grammar built from
-  `llama.createGrammarForJsonSchema`. Currently only `ai/`'s `move` handler
-  calls it, ahead of invoking `tools/`'s `move`.
+  `llama.createGrammarForJsonSchema`. Called by `ai/`'s `action` handler
+  only for actions that already passed `tools/`'s `checkAction`.
 - **`ai/`** (`src/ai/index.ts`) — `createAiSession(...)` loads the model,
   opens one `LlamaContext`, and draws two sequences from it: one for the
   narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`. Declares
-  the four tools above via `defineChatSessionFunction` and drives the
-  agentic loop through `session.prompt(input, {functions})` (see the Turn
-  Flow beta deviation above re: the uncapped loop). Each tool handler is
-  wrapped by a `record()` helper that invokes an optional
+  the three check tools plus the unified `action` tool via
+  `defineChatSessionFunction` (the `action` tool's params use a GBNF
+  `oneOf`/`const` schema to express the `move`/`use_technique`
+  discriminated union) and drives the agentic loop through
+  `session.prompt(input, {functions})` (see the Turn Flow beta deviation
+  above re: the uncapped loop). The `action` handler funnels every call
+  through `checkAction` → `rules/`'s `RuleValidator.validate` →
+  `applyAction` in sequence, short-circuiting on the first rejection. Each
+  tool handler is wrapped by a `record()` helper that invokes an optional
   `onToolCall?: (call) => void` callback — this is how `io/`'s debug-dump
   mode observes tool calls without `ai/` depending on `io/`.
 - **`core/`** (`src/core/index.ts`) — `createEngine(options)` assembles a
@@ -421,13 +442,18 @@ design above for beta scope.
 and Venom (D&D-range stats, 10–20) placed in Ben 10's Null Void dimension —
 one `open`-type region (`null-void-expanse`) with two connected nodes
 (`battlefield-core`, `drifting-wreckage`). The Experience declares no custom
-abilities/skills, exercising the default-ruleset fallback path. Verified via
-ad hoc scripts (not a checked-in test suite yet) that `loadExperience`,
-`getState`, `getScope`, and `moveTool` interoperate correctly: starting
+abilities/skills, exercising the default-ruleset fallback path. Each
+character's sheet also declares two `techniques` (Goku: `kamehameha`,
+`instant-transmission`; Venom: `symbiote-tendrils`, `venom-bite`) to exercise
+the `use_technique` capability gate. Verified via ad hoc scripts (not a
+checked-in test suite yet) that `loadExperience`, `getState`, `getScope`, and
+`tools/`'s `checkAction`/`applyAction` interoperate correctly: starting
 positions resolve from the Experience's declared placements, scope reports
 correct connections/direction/`othersPresent`, a valid move updates `dtm/`
-and is reflected in the next `getState`/`getScope` call, and an invalid
-move target fails gracefully instead of throwing.
+and is reflected in the next `getState`/`getScope` call, an invalid move
+target fails gracefully instead of throwing, a technique the character's
+sheet lists succeeds, and a technique not on the sheet (e.g. Goku attempting
+`hakai`) is rejected by the capability gate before any model call.
 
 ---
 

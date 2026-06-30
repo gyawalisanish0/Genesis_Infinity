@@ -96,6 +96,19 @@ export const HitPointsSchema = z.object({
 export type HitPoints = z.infer<typeof HitPointsSchema>;
 
 /**
+ * A named technique/ability a character actually knows, with a short
+ * description. This is the hard capability gate for tools/'s use_technique
+ * action: a character can only attempt a technique that appears in this
+ * list — checked structurally, before the attempt ever reaches rules/.
+ */
+export const TechniqueDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+});
+export type TechniqueDef = z.infer<typeof TechniqueDefSchema>;
+
+/**
  * The mechanical layer of a character — stats and skills used by rules/
  * for checks. Identity fields (class/race/background) are open strings,
  * not fixed enums, so non-fantasy settings aren't forced into D&D content.
@@ -114,10 +127,22 @@ export const CharacterSheetSchema = z
     level: z.number().int().positive().optional(),
     abilities: z.array(AbilityScoreSchema),
     skills: z.array(SkillSchema),
+    techniques: z.array(TechniqueDefSchema).default([]),
     hitPoints: HitPointsSchema.optional(),
     armorClass: z.number().optional(),
   })
   .superRefine((sheet, ctx) => {
+    const techniqueIds = new Set<string>();
+    for (const technique of sheet.techniques) {
+      if (techniqueIds.has(technique.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate technique id "${technique.id}"`,
+        });
+      }
+      techniqueIds.add(technique.id);
+    }
+
     const abilityIds = new Set<string>();
     for (const ability of sheet.abilities) {
       if (abilityIds.has(ability.id)) {

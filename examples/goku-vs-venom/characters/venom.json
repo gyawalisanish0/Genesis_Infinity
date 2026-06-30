@@ -20,6 +20,10 @@
     { "id": "stealth", "name": "Stealth", "governingAbilityId": "dex", "value": 6 },
     { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 5 }
   ],
+  "techniques": [
+    { "id": "symbiote-tendrils", "name": "Symbiote Tendrils", "description": "Lashes out with whip-like extensions of the symbiote mass." },
+    { "id": "venom-bite", "name": "Venom Bite", "description": "A vicious bite from the symbiote's fanged maw." }
+  ],
   "hitPoints": { "current": 160, "max": 160 },
   "armorClass": 16
 }

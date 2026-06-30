@@ -4,10 +4,28 @@ import {
   LlamaChatSession,
   type ChatSessionModelFunctions,
 } from "node-llama-cpp";
-import type { ToolContext } from "../tools/index.js";
-import { getScopeTool, getCharacterSheetTool, getRecentDtmTool, moveTool } from "../tools/index.js";
+import type { Action, ToolContext } from "../tools/index.js";
+import {
+  getScopeTool,
+  getCharacterSheetTool,
+  getRecentDtmTool,
+  checkAction,
+  applyAction,
+} from "../tools/index.js";
 import { RuleValidator } from "../rules/index.js";
 import { getState } from "../state/index.js";
+
+function describeAction(action: Action): string {
+  switch (action.type) {
+    case "move":
+      return `Move "${action.characterId}" to node "${action.targetNodeId}"`;
+    case "use_technique":
+      return (
+        `"${action.characterId}" attempts technique "${action.techniqueId}"` +
+        (action.targetId ? ` on "${action.targetId}"` : "")
+      );
+  }
+}
 
 export interface ToolCallRecord {
   name: string;
@@ -81,37 +99,54 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       handler: (params) =>
         record("get_recent_dtm", params, getRecentDtmTool(options.toolCtx, params)),
     }),
-    move: defineChatSessionFunction({
-      description: "Move a character to a connected node.",
+    action: defineChatSessionFunction({
+      description:
+        "Commit to an action that changes the world: either move a character to a " +
+        "connected node, or have a character attempt a technique. The character must " +
+        "actually know the technique (check get_character_sheet first if unsure) — " +
+        "unknown techniques are rejected immediately, with a reason.",
       params: {
-        type: "object",
-        properties: {
-          characterId: { type: "string" },
-          targetNodeId: { type: "string" },
-        },
+        oneOf: [
+          {
+            type: "object",
+            properties: {
+              type: { const: "move" },
+              characterId: { type: "string" },
+              targetNodeId: { type: "string" },
+            },
+          },
+          {
+            type: "object",
+            properties: {
+              type: { const: "use_technique" },
+              characterId: { type: "string" },
+              techniqueId: { type: "string" },
+              targetId: {
+                type: "string",
+                description: "Target character's id, or an empty string if untargeted.",
+              },
+            },
+          },
+        ],
       },
       handler: async (params) => {
+        const action: Action = { ...params, timestamp: turn.timestamp };
+
+        const check = checkAction(options.toolCtx, action);
+        if (!check.allowed) {
+          return record("action", params, { success: false, reason: check.reason });
+        }
+
         const state = getState(options.toolCtx.dtm, options.toolCtx.loaded);
         const validation = await ruleValidator.validate(
-          {
-            type: "move",
-            characterId: params.characterId,
-            description: `Move "${params.characterId}" to node "${params.targetNodeId}"`,
-          },
+          { type: action.type, characterId: action.characterId, description: describeAction(action) },
           state,
         );
         if (!validation.valid) {
-          return record("move", params, { success: false, reason: validation.reason });
+          return record("action", params, { success: false, reason: validation.reason });
         }
-        return record(
-          "move",
-          params,
-          moveTool(options.toolCtx, {
-            characterId: params.characterId,
-            targetNodeId: params.targetNodeId,
-            timestamp: turn.timestamp,
-          }),
-        );
+
+        return record("action", params, applyAction(options.toolCtx, action));
       },
     }),
   };
