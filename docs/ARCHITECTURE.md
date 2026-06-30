@@ -164,6 +164,32 @@ The engine's memory system. An **append-only, timestamped log of everything**:
 every change, every entity/item position update, every action taken. This is
 an event-sourcing pattern — DTM is the single source of truth.
 
+#### Storage Format
+
+- **SQLite** — a single embedded file DB. Works natively on desktop/server
+  (and offline); a web target would need a WASM build (e.g. sql.js) or a
+  backend proxy, deferred until web support is built.
+- **Schema:** a single `dtm_events` table — typed common columns for fields
+  every event shares (queryable/indexable), plus a `payload` JSON column
+  for event-type-specific extras:
+
+  | Column | Type | Notes |
+  |---|---|---|
+  | `id` | INTEGER PK | autoincrement, ordering tiebreaker |
+  | `experience_id` | TEXT | scopes events to a single Experience/playthrough |
+  | `timestamp` | INTEGER | in-game/engine time, not wall clock |
+  | `type` | TEXT | open string event type, e.g. `"entity.moved"`, `"action.applied"` — concrete vocabulary TBD alongside `tools/` |
+  | `entity_id` | TEXT, nullable | character/NPC/item the event concerns, if any |
+  | `node_id` | TEXT, nullable | node the event occurred at, if applicable |
+  | `position_x` / `position_y` | INTEGER, nullable | for entity/item position-update events |
+  | `payload` | TEXT (JSON) | event-type-specific extra data |
+
+  Indexed on `experience_id`, `timestamp`, `entity_id`, and `type` for the
+  query patterns `state/` and `ai/` summarization need (e.g. "everything
+  for this character since timestamp X").
+- **Query interface** (client library/ORM to read/write this table from
+  TypeScript) is not yet chosen — separate decision, deferred below.
+
 ### State
 
 The **current snapshot** of the game (what's true right now). State is a
@@ -302,7 +328,7 @@ detected capability.
 
 ## Open / Deferred
 
-- DTM storage format and query interface
+- DTM query interface (client library/ORM choice for the SQLite schema above)
 - Generated-content store format/interface (AI-authored plot points/NPC
   stories in `open` worlds — separate from `dtm/`)
 - Initial `tools/` check/action set definitions
