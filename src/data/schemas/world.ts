@@ -14,10 +14,35 @@ export const WorldTypeSchema = z.enum(["narrative-bound", "semi-open", "open"]);
 export type WorldType = z.infer<typeof WorldTypeSchema>;
 
 /**
- * Environmental codes are a placeholder until the engine-wide schema is
- * defined (see docs/ARCHITECTURE.md, Open / Deferred).
+ * A single environmental condition (climate, hazard, lighting, etc).
+ * `category` is an open string, not a fixed enum — categories vary by
+ * setting (sci-fi radiation vs. fantasy curse vs. mundane weather).
+ *
+ * `mechanical` flags whether this code has a gameplay effect. When true,
+ * `effectId` references an effect that rules/ resolves — the effect's
+ * actual logic lives in rules/, not here, keeping world data decoupled
+ * from rule implementation.
+ *
+ * A node's environmentalCodes merge with its region's, keyed by
+ * (category, value): a node entry overrides the region's matching entry;
+ * anything not declared on the node inherits from the region unchanged.
  */
-export const EnvironmentalCodesSchema = z.array(z.string());
+export const EnvironmentalCodeSchema = z
+  .object({
+    category: z.string(),
+    value: z.string(),
+    severity: z.number().min(1).max(5),
+    mechanical: z.boolean(),
+    effectId: z.string().optional(),
+    description: z.string().optional(),
+  })
+  .refine((code) => !code.mechanical || code.effectId !== undefined, {
+    message: "effectId is required when mechanical is true",
+    path: ["effectId"],
+  });
+export type EnvironmentalCode = z.infer<typeof EnvironmentalCodeSchema>;
+
+export const EnvironmentalCodesSchema = z.array(EnvironmentalCodeSchema);
 
 /**
  * A connection from one node to another. `direction` is only an override —

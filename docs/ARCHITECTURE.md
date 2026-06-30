@@ -56,8 +56,21 @@ nodes** (the actual visitable locations). Schema defined in
   at consistent spatial reasoning across a long session. Direction must be a
   fact `scope/` hands the AI, never something left for the AI to work out or
   remember on its own.
-- Environmental codes (climate, hazards, conditions) can be set at the region
-  level and overridden per-node — exact code vocabulary still deferred.
+- **Environmental codes** — structured objects (not flat tags), each with:
+  - `category` — open string, not a fixed enum (e.g. `"climate"`, `"hazard"`,
+    `"lighting"`) — left open since categories vary by setting.
+  - `value` — the specific descriptor (e.g. `"cold"`, `"toxic"`).
+  - `severity` — 1–5 intensity scale.
+  - `mechanical` — per-code flag; some codes are gameplay-affecting, others
+    are narrative flavor only.
+  - `effectId` — required when `mechanical` is true; references an effect
+    that `rules/` resolves. The effect's actual logic lives in `rules/`, not
+    in world data, keeping content decoupled from rule implementation.
+  - `description` — optional flavor text for narration.
+  - **Merge behavior:** a node's codes merge with its region's, keyed by
+    `(category, value)` — a node entry overrides the region's matching
+    entry; anything not declared on the node inherits from the region
+    unchanged.
 - World-level data integrity is enforced at validation time: region positions
   must fall within the world's bounds, region and node IDs must be unique
   (node IDs globally, since edges can cross regions), and every edge must
@@ -231,7 +244,6 @@ detected capability.
 
 ## Open / Deferred
 
-- World environmental code vocabulary/schema
 - Mechanics of `narrative-bound` / `semi-open` / `open` world types
 - DTM storage format and query interface
 - Initial `tools/` check/action set definitions
@@ -242,3 +254,4 @@ detected capability.
 - Hardware capability detection method
 - RAM/VRAM threshold logic for automatic SAL vs MML selection
 - Context handoff format passed between models in SAL
+- `effectId` vocabulary and how `rules/` resolves/registers effects
