@@ -175,8 +175,15 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
   // Bounded explicitly: "auto" would try to size up to the model's full
   // trained context (often 128K+ tokens), and with no `sequences` count the
   // context defaults to 1 slot even though 3 independent sequences are
-  // opened below — either gap alone can exhaust available RAM.
-  const context = await model.createContext({ contextSize: 4096, sequences: 3 });
+  // opened below — either gap alone can exhaust available RAM. 4096 turned
+  // out too tight in practice — observed a real "context shift strategy did
+  // not return a history that fits" crash on a single turn, since the
+  // system prompt, the action tool's full 3-variant schema, and large
+  // tool-result JSON payloads (further multiplied by this model's frequent
+  // malformed-call retries) can exceed it before any real history
+  // accumulates. 8192 costs ~1.4GB more KV cache across 3 sequences —
+  // comfortably inside a 16GB container.
+  const context = await model.createContext({ contextSize: 8192, sequences: 3 });
 
   const narrativeSequence = context.getSequence();
   const rulesSequence = context.getSequence();
