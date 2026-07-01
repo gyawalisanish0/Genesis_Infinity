@@ -33,6 +33,13 @@ export type Action =
       techniqueId: string;
       targetId?: string;
       timestamp: number;
+    }
+  | {
+      type: "interact";
+      characterId: string;
+      description: string;
+      targetId?: string;
+      timestamp: number;
     };
 
 export interface ActionCheck {
@@ -193,6 +200,57 @@ function applyUseTechnique(
 }
 
 /**
+ * Structural gate for interact: no hard capability check is possible for
+ * free-form content, but if a target is named it must actually be present
+ * — same node as the acting character. This is the only deterministic
+ * guardrail on interact; everything else (does the attempt succeed) is
+ * rules/'s tri-state judgment (see docs/ARCHITECTURE.md).
+ */
+function checkInteract(
+  ctx: ToolContext,
+  action: Extract<Action, { type: "interact" }>,
+): ActionCheck {
+  if (!action.targetId) {
+    return { allowed: true };
+  }
+
+  const state = getState(ctx.dtm, ctx.loaded, action.timestamp);
+  const actor = state.characters.find((c) => c.sheet.id === action.characterId);
+  if (!actor) {
+    return { allowed: false, reason: `Character "${action.characterId}" not found` };
+  }
+
+  const target = state.characters.find((c) => c.sheet.id === action.targetId);
+  if (!target) {
+    return { allowed: false, reason: `"${action.targetId}" not found` };
+  }
+
+  if (target.nodeId !== actor.nodeId) {
+    return {
+      allowed: false,
+      reason: `"${target.sheet.name}" is not present at "${actor.nodeId}"`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+function applyInteract(
+  ctx: ToolContext,
+  action: Extract<Action, { type: "interact" }>,
+  outcome: ActionOutcome,
+): ActionResult {
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: action.timestamp,
+    type: "character.interacted",
+    entityId: action.characterId,
+    payload: { description: action.description, targetId: action.targetId, outcome },
+  });
+  return { success: true, outcome };
+}
+
+/**
  * Records a rejected action attempt — from checkAction's hard capability
  * gate, or rules/'s "invalid" judgment — and escalates: once a character
  * accrues STRIKE_THRESHOLD rejections, this and every further rejection
@@ -242,9 +300,10 @@ export function rejectAction(
 
 /**
  * Structural/capability pre-check for a proposed action — reachability for
- * move, "does the character actually know this" for use_technique. This is
- * the hard gate: failing it means the action never reaches rules/ at all
- * (see ai/, docs/ARCHITECTURE.md Turn Flow).
+ * move, "does the character actually know this" for use_technique, "does
+ * the named target exist and is it present" for interact. This is the hard
+ * gate: failing it means the action never reaches rules/ at all (see ai/,
+ * docs/ARCHITECTURE.md Turn Flow).
  */
 export function checkAction(ctx: ToolContext, action: Action): ActionCheck {
   switch (action.type) {
@@ -252,6 +311,8 @@ export function checkAction(ctx: ToolContext, action: Action): ActionCheck {
       return checkMove(ctx, action);
     case "use_technique":
       return checkUseTechnique(ctx, action);
+    case "interact":
+      return checkInteract(ctx, action);
   }
 }
 
@@ -270,5 +331,7 @@ export function applyAction(
       return applyMove(ctx, action, outcome);
     case "use_technique":
       return applyUseTechnique(ctx, action, outcome);
+    case "interact":
+      return applyInteract(ctx, action, outcome);
   }
 }

@@ -387,17 +387,25 @@ design above for beta scope.
   - `say` — a character speaking (dialogue, taunts, questions). Always
     permitted: no `checkAction`/`rules/` gate, no escalation on repeat,
     since speech has no capability or legality dimension the way
-    `move`/`use_technique` do. Still a write — appends a `character.said`
-    dtm event with `{message, targetId}` — so it persists in history, but
-    it's neither a read-only check tool nor a validated `action`; a third
-    category for world-changes the engine never needs to contest. This is
-    the current answer to "the closed `Action` union can't cover
-    everything" for the conversational slice specifically — attack/
-    use_item/investigate-style actions still have no tool yet.
+    `move`/`use_technique`/`interact` do. Still a write — appends a
+    `character.said` dtm event with `{message, targetId}` — so it persists
+    in history, but it's neither a read-only check tool nor a validated
+    `action`; a third category for world-changes the engine never needs to
+    contest.
   - `action` (action) — a single tool with a discriminated-union payload
-    (`{type: "move", ...}` or `{type: "use_technique", ...}`), rather than
-    one tool per action type. Two functions are exported per action type
-    and dispatched by `checkAction`/`applyAction`:
+    (`{type: "move", ...}`, `{type: "use_technique", ...}`, or
+    `{type: "interact", ...}`), rather than one tool per action type.
+    Functions are exported per action type and dispatched by
+    `checkAction`/`applyAction`. Zoning by **validation posture**, not by
+    verb, is the engine's answer to "the closed `Action` union can't cover
+    everything": `move` and `use_technique` are hard-gated because
+    reachability and capability are deterministic facts, `interact` is the
+    open-ended catch-all for anything else (attack, use item, investigate,
+    manipulate the environment) — its content is free text, checked only
+    for a coherent target, with the actual plausibility judgment pushed
+    entirely to `rules/`. This means new "verbs" don't need new union
+    members or new `checkAction`/`applyAction` code — only genuinely new
+    *validation postures* (a new kind of hard gate) would.
     - `checkAction` — a deterministic, structural pre-check that runs
       **before** `rules/` is ever invoked, and can reject without any
       model call. For `move`, this is reachability (is the target node
@@ -407,13 +415,18 @@ design above for beta scope.
       immediately with a reason (e.g. `"Son Goku" does not know a
       technique called "hakai"`) — an unknown technique never reaches
       `rules/` for a legality judgment, since knowing/not-knowing a
-      technique isn't a judgment call.
+      technique isn't a judgment call. For `interact`, this is much
+      thinner: if a `targetId` is given, the target must exist and be
+      co-located with the acting character (same node) — no capability
+      check is possible for free-form content, so this is the only
+      deterministic guardrail interact gets.
     - `applyAction(ctx, action, outcome)` — runs only after both
       `checkAction` and `rules/` approve, and appends the resulting dtm
       event (`entity.moved` for `move`, `technique.used` with a
-      `{techniqueId, targetId}` payload for `use_technique`), tagged with
-      `outcome` (`"valid"` or `"neutral"`, per `rules/`'s tri-state
-      judgment below).
+      `{techniqueId, targetId}` payload for `use_technique`,
+      `character.interacted` with a `{description, targetId}` payload for
+      `interact`), tagged with `outcome` (`"valid"` or `"neutral"`, per
+      `rules/`'s tri-state judgment below).
     - `rejectAction(ctx, characterId, actionType, reason, turn)` — the
       escalation path, called whenever `checkAction` fails or `rules/`
       judges an action `"invalid"`. Appends an `action.rejected` dtm
@@ -439,12 +452,20 @@ design above for beta scope.
   the model includes each character's `activeDebuffs`, so the judgment can
   factor in prior escalation. Called by `ai/`'s `action` handler only for
   actions that already passed `tools/`'s `checkAction`.
+  Since `interact` has no hard gate beyond target presence, `rules/`'s
+  system prompt is the only grounding its free-form content gets, so it's
+  written to be explicit rather than relying on the model to infer intent:
+  concrete per-outcome criteria tied to state fields (position,
+  abilities/skills/techniques, active debuffs), an instruction to judge
+  mechanical plausibility only — not tone or prose quality, that's the
+  narrator's job — and three worked examples (one per outcome) to anchor
+  a small local model's judgment.
 - **`ai/`** (`src/ai/index.ts`) — `createAiSession(...)` loads the model,
   opens one `LlamaContext`, and draws two sequences from it: one for the
   narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`. Declares
-  the three check tools plus the unified `action` tool via
+  the three check tools, `say`, and the unified `action` tool via
   `defineChatSessionFunction` (the `action` tool's params use a GBNF
-  `oneOf`/`const` schema to express the `move`/`use_technique`
+  `oneOf`/`const` schema to express the `move`/`use_technique`/`interact`
   discriminated union) and drives the agentic loop through
   `session.prompt(input, {functions})` (see the Turn Flow beta deviation
   above re: the uncapped loop). The `action` handler funnels every call

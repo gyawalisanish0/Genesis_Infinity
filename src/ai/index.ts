@@ -26,6 +26,11 @@ function describeAction(action: Action): string {
         `"${action.characterId}" attempts technique "${action.techniqueId}"` +
         (action.targetId ? ` on "${action.targetId}"` : "")
       );
+    case "interact":
+      return (
+        `"${action.characterId}" attempts: ${action.description}` +
+        (action.targetId ? ` (targeting "${action.targetId}")` : "")
+      );
   }
 }
 
@@ -123,10 +128,14 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
     }),
     action: defineChatSessionFunction({
       description:
-        "Commit to an action that changes the world: either move a character to a " +
-        "connected node, or have a character attempt a technique. The character must " +
-        "actually know the technique (check get_character_sheet first if unsure) — " +
-        "unknown techniques are rejected immediately, with a reason.",
+        "Commit to an action that changes the world: move a character to a " +
+        "connected node, have a character attempt a technique, or have a " +
+        "character attempt anything else not covered by move/use_technique/say " +
+        "(attacking, using an item, investigating, manipulating the environment, " +
+        "etc.) via interact's free-form description. The character must actually " +
+        "know a technique to use it (check get_character_sheet first if unsure) — " +
+        "unknown techniques are rejected immediately, with a reason. For interact, " +
+        "a named target must actually be present at the character's location.",
       params: {
         oneOf: [
           {
@@ -143,6 +152,21 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
               type: { const: "use_technique" },
               characterId: { type: "string" },
               techniqueId: { type: "string" },
+              targetId: {
+                type: "string",
+                description: "Target character's id, or an empty string if untargeted.",
+              },
+            },
+          },
+          {
+            type: "object",
+            properties: {
+              type: { const: "interact" },
+              characterId: { type: "string" },
+              description: {
+                type: "string",
+                description: "Free-form description of what the character is attempting.",
+              },
               targetId: {
                 type: "string",
                 description: "Target character's id, or an empty string if untargeted.",
