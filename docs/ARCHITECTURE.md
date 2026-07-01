@@ -180,7 +180,7 @@ an event-sourcing pattern — DTM is the single source of truth.
   | `id` | INTEGER PK | autoincrement, ordering tiebreaker |
   | `experience_id` | TEXT | scopes events to a single Experience/playthrough |
   | `timestamp` | INTEGER | in-game/engine time, not wall clock |
-  | `type` | TEXT | open string event type, e.g. `"entity.moved"`, `"action.applied"` — concrete vocabulary TBD alongside `tools/` |
+  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"` |
   | `entity_id` | TEXT, nullable | character/NPC/item the event concerns, if any |
   | `node_id` | TEXT, nullable | node the event occurred at, if applicable |
   | `position_x` / `position_y` | INTEGER, nullable | for entity/item position-update events |
@@ -555,3 +555,16 @@ passed.
 - RAM/VRAM threshold logic for automatic SAL vs MML selection
 - Context handoff format passed between models in SAL
 - `effectId` vocabulary and how `rules/` resolves/registers effects
+- **Debuffs are logged but not yet mechanically live** — `state/`'s
+  `activeDebuffs` surfaces `armorClassDelta`/`maxHitPointsDelta` in the
+  snapshot the model reads, but nothing yet computes an actual "effective"
+  armor class or max HP from a sheet plus its active debuffs; no consumer
+  reads/uses those deltas. Escalation currently only has narrative weight.
+- **No item/inventory schema** — `interact`'s free-form description can
+  describe using an item, but `CharacterSheet` has no concept of carried
+  items, so nothing structurally grounds "does this character actually
+  have that item."
+- **Escalation constants are hardcoded, not Experience-authored** —
+  `STRIKE_THRESHOLD` (3), `DEBUFF_DURATION_TURNS` (5), and `DEBUFF_POOL`
+  itself live as engine constants in `state/`/`tools/`, not as
+  Experience-configurable data.
