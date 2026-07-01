@@ -547,7 +547,25 @@ design above for beta scope.
   without advancing it (used by `io/`'s debug-dump mode so its `state/`
   reads see the same turn the engine is currently on). This counter is
   "engine time" per the DTM section above — a simple incrementing count,
-  not wall-clock time.
+  not wall-clock time. `createEngine` also starts a `timeline/` `Timeline`
+  and exposes `currentTimelineUnit()` alongside `currentTurn()` — a second,
+  independent clock (see `timeline/` below).
+- **`timeline/`** (`src/timeline/index.ts`) — a real-wall-clock-anchored
+  counter, deliberately separate from the turn-based `dtm` timestamp above
+  (which counts player inputs, not elapsed time). `createTimeline(now =
+  Date.now)` captures a start time and returns `{currentUnit()}`, a pure,
+  lazily-computed function of elapsed real time — `Math.floor((now() -
+  startMs) / 500)`, i.e. 2 units per second — with no `setInterval` or
+  background process to manage or dispose. `now` is injectable for
+  deterministic testing without real sleeps. Purely internal for now: not
+  read by `state/`, `scope/`, `rules/`, or `ai/`, and never surfaced to the
+  model — the AI carries zero burden for it. In-memory per session, not
+  persisted across restarts, same as `core/`'s existing turn counter.
+  Intended as the foundation for effect/hazard duration (e.g. escalation
+  debuffs, the planned environmental `effectId` resolution in Beta
+  Preparation below) to behave consistently regardless of how many turns a
+  player takes in a given span of real time — that integration is a
+  separate follow-up, not yet wired.
 - **`io/`** (`src/io/cli.ts`) — a CLI chat loop (`npm run play`) combining
   play and an AI-perception inspector:
   `--experience <dir> --model <path> --character <id> [--db <path>] [--debug]`.
@@ -606,13 +624,16 @@ longer-tail backlog:
 
 - **`effectId` vocabulary and `rules/` effect resolution** — `EnvironmentalCode`
   (World section above) already carries an `effectId` when `mechanical` is
-  true, but nothing yet gives that id meaning: no vocabulary of concrete
-  environmental effects (e.g. a hazard that deals damage over time, or
-  blinds) and no resolution step in `rules/` that looks up and applies one.
-  This is a distinct mechanism from `tools/`'s escalation debuffs above —
-  world/environment-driven rather than punishment for invalid player
-  actions — though it would likely reuse the same `EffectiveStats`/
-  `armorClassDelta`/`maxHitPointsDelta` shape once character-affecting.
+  true, but nothing yet gives that id meaning. Decided design: `effectId`
+  will reference an id in the same shared pool as escalation
+  (`ctx.loaded.ruleset.effects`/`EffectDefSchema`) rather than a separate
+  vocabulary, and application will be **both** deterministic (auto-applied
+  on arrival at a hazardous node, no AI judgment) **and** visible to
+  `rules/`'s tri-state judgment for situational nuance. Duration/expiry for
+  the applied effect is intentionally not yet designed — it's waiting on
+  the `timeline/` mechanism above (a real-time-anchored duration, distinct
+  from escalation debuffs' turn-count-based `expiresAtTurn`) rather than
+  reusing the turn-based model. Not yet implemented.
 - **Item/inventory schema** — `interact`'s free-form description can
   already describe using an item, but `CharacterSheet` has no concept of
   carried items, so nothing structurally grounds "does this character

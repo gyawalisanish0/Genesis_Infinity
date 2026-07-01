@@ -2,6 +2,7 @@ import { loadExperience, type LoadedExperience } from "../data/loaders/experienc
 import { Dtm } from "../dtm/index.js";
 import { createAiSession, type ToolCallRecord } from "../ai/index.js";
 import type { ToolContext } from "../tools/index.js";
+import { createTimeline } from "../timeline/index.js";
 
 export interface EngineOptions {
   experienceDir: string;
@@ -16,6 +17,12 @@ export interface Engine {
   toolCtx: ToolContext;
   /** The engine's current turn counter (see dtm/'s "engine time"). */
   currentTurn(): number;
+  /**
+   * The engine's timeline unit — real-wall-clock-anchored, advancing
+   * automatically regardless of turns taken (see timeline/index.ts). Purely
+   * internal for now: not read by state/scope/rules/ai, not AI-visible.
+   */
+  currentTimelineUnit(): number;
   /** Sends one user turn through the agentic loop, advancing engine time by one. */
   takeTurn(input: string): Promise<string>;
   dispose(): Promise<void>;
@@ -49,11 +56,13 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
   });
 
   let timestamp = 0;
+  const timeline = createTimeline();
 
   return {
     loaded,
     toolCtx,
     currentTurn: () => timestamp,
+    currentTimelineUnit: () => timeline.currentUnit(),
     async takeTurn(input: string) {
       timestamp += 1;
       return aiSession.prompt(input, timestamp);
