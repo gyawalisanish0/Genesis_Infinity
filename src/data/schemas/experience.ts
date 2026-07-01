@@ -17,11 +17,13 @@ export type CharacterPlacement = z.infer<typeof CharacterPlacementSchema>;
  * Tunables for tools/'s escalation system (rejectAction) — all optional,
  * each falling back independently to DEFAULT_ESCALATION_CONFIG if not
  * declared. `maxSeverity` shares EffectDefSchema's 1-5 severity scale.
+ * `debuffDurationUnits` is in timeline/ units (2 per real second, see
+ * timeline/index.ts) — real-wall-clock-anchored, not turn count.
  */
 export const EscalationConfigSchema = z.object({
   strikeThreshold: z.number().int().positive().optional(),
   maxSeverity: z.number().int().min(1).max(5).optional(),
-  debuffDurationTurns: z.number().int().positive().optional(),
+  debuffDurationUnits: z.number().int().positive().optional(),
 });
 export type EscalationConfig = z.infer<typeof EscalationConfigSchema>;
 
@@ -29,7 +31,8 @@ export type EscalationConfig = z.infer<typeof EscalationConfigSchema>;
 export const DEFAULT_ESCALATION_CONFIG: Required<EscalationConfig> = {
   strikeThreshold: 3,
   maxSeverity: 5,
-  debuffDurationTurns: 5,
+  // 60 timeline units = 30 real seconds at 2 units/sec.
+  debuffDurationUnits: 60,
 };
 
 /**

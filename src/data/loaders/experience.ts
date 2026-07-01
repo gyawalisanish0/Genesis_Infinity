@@ -28,7 +28,7 @@ function resolveEscalationConfig(declared: EscalationConfig | undefined): Requir
   return {
     strikeThreshold: declared?.strikeThreshold ?? DEFAULT_ESCALATION_CONFIG.strikeThreshold,
     maxSeverity: declared?.maxSeverity ?? DEFAULT_ESCALATION_CONFIG.maxSeverity,
-    debuffDurationTurns: declared?.debuffDurationTurns ?? DEFAULT_ESCALATION_CONFIG.debuffDurationTurns,
+    debuffDurationUnits: declared?.debuffDurationUnits ?? DEFAULT_ESCALATION_CONFIG.debuffDurationUnits,
   };
 }
 

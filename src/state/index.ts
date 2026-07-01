@@ -6,12 +6,15 @@ import type { CharacterSheet, EffectDef, HitPoints } from "../data/schemas/chara
  * An EffectDef as actually applied to a character at a point in time.
  * EffectDef itself (id/name/description/severity/deltas) is Experience-
  * authored ruleset data (see data/schemas/character.ts, resolved into
- * loaded.ruleset.effects) — this adds the turn-bookkeeping for how long it
- * stays active.
+ * loaded.ruleset.effects) — this adds the bookkeeping for how long it stays
+ * active. `appliedAtUnit`/`expiresAtUnit` are timeline/ units (real-wall-
+ * clock-anchored), not turn counts — an effect's duration is meant to
+ * behave consistently regardless of how many turns pass in that span (see
+ * timeline/index.ts, docs/ARCHITECTURE.md).
  */
 export interface AppliedDebuff extends EffectDef {
-  appliedAtTurn: number;
-  expiresAtTurn: number;
+  appliedAtUnit: number;
+  expiresAtUnit: number;
 }
 
 /**
@@ -53,18 +56,18 @@ function currentNodeId(
   return last?.nodeId ?? startingNodeId;
 }
 
-/** A character's currently active (non-expired as of currentTurn) debuffs. */
+/** A character's currently active (non-expired as of currentTimelineUnit) debuffs. */
 function activeDebuffsFor(
   dtm: Dtm,
   experienceId: string,
   characterId: string,
-  currentTurn: number,
+  currentTimelineUnit: number,
 ): AppliedDebuff[] {
   return dtm
     .forEntity(experienceId, characterId)
     .filter((event) => event.type === "debuff.applied")
     .map((event) => event.payload as AppliedDebuff)
-    .filter((debuff) => debuff.expiresAtTurn > currentTurn);
+    .filter((debuff) => debuff.expiresAtUnit > currentTimelineUnit);
 }
 
 /**
@@ -94,9 +97,18 @@ function computeEffectiveStats(sheet: CharacterSheet, activeDebuffs: AppliedDebu
  * character's sheet, current node, active debuffs, and effective stats
  * (sheet + debuffs applied), derived from dtm/ rather than stored
  * independently (see docs/ARCHITECTURE.md, "State"). `currentTurn` is the
- * engine's turn counter, used to filter out expired debuffs.
+ * engine's turn counter, echoed into the snapshot (AI-visible, e.g. via
+ * rules/'s judgment). `currentTimelineUnit` is a separate, real-wall-clock-
+ * anchored value (see timeline/index.ts) used only internally here, to
+ * filter out expired debuffs — it is not itself added to the snapshot, so
+ * this doesn't make the timeline AI-visible.
  */
-export function getState(dtm: Dtm, loaded: LoadedExperience, currentTurn: number): StateSnapshot {
+export function getState(
+  dtm: Dtm,
+  loaded: LoadedExperience,
+  currentTurn: number,
+  currentTimelineUnit: number,
+): StateSnapshot {
   const startingNodeIds = new Map(
     (loaded.experience.characters ?? []).map((placement) => [
       placement.characterId,
@@ -109,7 +121,7 @@ export function getState(dtm: Dtm, loaded: LoadedExperience, currentTurn: number
     if (startingNodeId === undefined) {
       throw new Error(`Character "${sheet.id}" has no starting placement in this Experience`);
     }
-    const activeDebuffs = activeDebuffsFor(dtm, loaded.experience.id, sheet.id, currentTurn);
+    const activeDebuffs = activeDebuffsFor(dtm, loaded.experience.id, sheet.id, currentTimelineUnit);
     return {
       sheet,
       nodeId: currentNodeId(dtm, loaded.experience.id, sheet.id, startingNodeId),

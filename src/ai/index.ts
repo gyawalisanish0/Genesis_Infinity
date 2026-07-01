@@ -191,7 +191,12 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           return record("action", params, result);
         }
 
-        const state = getState(options.toolCtx.dtm, options.toolCtx.loaded, action.timestamp);
+        const state = getState(
+          options.toolCtx.dtm,
+          options.toolCtx.loaded,
+          action.timestamp,
+          options.toolCtx.timeline.currentUnit(),
+        );
         const validation = await ruleValidator.validate(
           { type: action.type, characterId: action.characterId, description: describeAction(action) },
           state,

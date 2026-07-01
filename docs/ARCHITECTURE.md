@@ -180,12 +180,14 @@ below).
 ##### Escalation Config
 
 `EscalationConfigSchema` (`src/data/schemas/experience.ts`) tunes
-`rejectAction` itself: `{strikeThreshold?, maxSeverity?, debuffDurationTurns?}`,
-all optional. Each field falls back independently to
-`DEFAULT_ESCALATION_CONFIG` (`{strikeThreshold: 3, maxSeverity: 5,
-debuffDurationTurns: 5}`) if the Experience doesn't declare it — declaring
-only one field (e.g. a stricter `maxSeverity` cap) doesn't require
-redeclaring the others. Resolved once per load into
+`rejectAction` itself: `{strikeThreshold?, maxSeverity?, debuffDurationUnits?}`,
+all optional. `debuffDurationUnits` is in `timeline/` units (see `timeline/`
+below in Beta Implementation) — real-wall-clock-anchored, not turn count.
+Each field falls back independently to `DEFAULT_ESCALATION_CONFIG`
+(`{strikeThreshold: 3, maxSeverity: 5, debuffDurationUnits: 60}` — 60 units
+is 30 real seconds at 2 units/sec) if the Experience doesn't declare it —
+declaring only one field (e.g. a stricter `maxSeverity` cap) doesn't
+require redeclaring the others. Resolved once per load into
 `LoadedExperience.escalation` (a sibling of `ruleset`, since it's tuning
 parameters rather than declarable ruleset content) by
 `data/loaders/experience.ts`'s `resolveEscalationConfig`.
@@ -406,13 +408,15 @@ design above for beta scope.
 - **`dtm/`** (`src/dtm/index.ts`) — implements the `dtm_events` schema above
   via `node:sqlite`'s `DatabaseSync`, with no ORM (see DTM section above for
   the resolved query interface).
-- **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded, currentTurn)`
-  returns a `StateSnapshot`: every character's sheet, current `nodeId`
-  (derived from `dtm.lastPosition`, falling back to the Experience's
-  declared `startingNodeId`), `activeDebuffs` — non-expired `AppliedDebuff`s
-  (an `EffectDef` plus `appliedAtTurn`/`expiresAtTurn`) derived from
-  `debuff.applied` dtm events, filtered by `expiresAtTurn > currentTurn` —
-  and `effectiveStats`, `computeEffectiveStats`'s result: the sheet's
+- **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded, currentTurn,
+  currentTimelineUnit)` returns a `StateSnapshot`: every character's sheet,
+  current `nodeId` (derived from `dtm.lastPosition`, falling back to the
+  Experience's declared `startingNodeId`), `activeDebuffs` — non-expired
+  `AppliedDebuff`s (an `EffectDef` plus `appliedAtUnit`/`expiresAtUnit`,
+  `timeline/` units — real-wall-clock-anchored, not turn count) derived
+  from `debuff.applied` dtm events, filtered by `expiresAtUnit >
+  currentTimelineUnit` — and `effectiveStats`, `computeEffectiveStats`'s
+  result: the sheet's
   `armorClass`/`hitPoints` with `activeDebuffs`' deltas summed in (max HP
   floored at 0, current HP clamped down if the effective max drops below
   it). Confirms the "state is a derived view, never independently stored"
@@ -422,6 +426,9 @@ design above for beta scope.
   rather than leaving `rules/` to sum deltas out of `activeDebuffs` itself
   follows the same principle as `scope/`'s computed direction below: a fact
   the engine hands the AI, not something left for it to derive.
+  `currentTimelineUnit` is used only for this expiry filter — it is not
+  itself added to `StateSnapshot`, so this doesn't make the timeline value
+  AI-visible, only its derived effect (which debuffs remain active).
 - **`scope/`** (`src/scope/index.ts`) — `getScope(world, state, characterId)`
   returns a character's current node (merged environmental codes per the
   node-overrides-region rule above, and connections with **computed**
@@ -485,13 +492,18 @@ design above for beta scope.
       escalation path, called whenever `checkAction` fails or `rules/`
       judges an action `"invalid"`. Reads its tuning from
       `ctx.loaded.escalation` (see Escalation Config above) rather than
-      hardcoded constants. Appends an `action.rejected` dtm event, then
-      counts that character's total rejections; once the count reaches
-      `escalation.strikeThreshold`, this and every further rejection also
-      appends a `debuff.applied` event, expiring
-      `escalation.debuffDurationTurns` turns later. The specific effect is
-      drawn at random from `ctx.loaded.ruleset.effects` (the Experience's
-      resolved effect pool — see Escalation Effects above), but only from
+      hardcoded constants. Appends an `action.rejected` dtm event (`turn`
+      is only used for this event's own `timestamp` column — turn count,
+      for ordering), then counts that character's total rejections; once
+      the count reaches `escalation.strikeThreshold`, this and every
+      further rejection also appends a `debuff.applied` event, with
+      `appliedAtUnit` read from `ctx.timeline.currentUnit()` and
+      `expiresAtUnit` set `escalation.debuffDurationUnits` timeline/ units
+      later — real-wall-clock-anchored, so a debuff's real-world duration
+      doesn't depend on how many turns the player takes in that span. The
+      specific effect is drawn at random from `ctx.loaded.ruleset.effects`
+      (the Experience's resolved effect pool — see Escalation Effects
+      above), but only from
       effects whose `severity` is at or below an eligible ceiling that
       rises by 1 with each strike past the threshold (capped at
       `escalation.maxSeverity`): strike 3 can only draw severity 1 (with
@@ -557,15 +569,18 @@ design above for beta scope.
   lazily-computed function of elapsed real time — `Math.floor((now() -
   startMs) / 500)`, i.e. 2 units per second — with no `setInterval` or
   background process to manage or dispose. `now` is injectable for
-  deterministic testing without real sleeps. Purely internal for now: not
-  read by `state/`, `scope/`, `rules/`, or `ai/`, and never surfaced to the
-  model — the AI carries zero burden for it. In-memory per session, not
-  persisted across restarts, same as `core/`'s existing turn counter.
-  Intended as the foundation for effect/hazard duration (e.g. escalation
-  debuffs, the planned environmental `effectId` resolution in Beta
-  Preparation below) to behave consistently regardless of how many turns a
-  player takes in a given span of real time — that integration is a
-  separate follow-up, not yet wired.
+  deterministic testing without real sleeps. Not surfaced to the model —
+  the AI carries zero burden for it — though it is now read internally:
+  `core/` creates one `Timeline` per session and puts it on `ToolContext`,
+  so `tools/`'s `rejectAction` computes escalation debuffs'
+  `appliedAtUnit`/`expiresAtUnit` from it (see `rejectAction` above), and
+  `state/`'s `getState` takes a `currentTimelineUnit` to filter expired
+  debuffs by it (also above) — the raw unit value itself is never added to
+  `StateSnapshot`, only its derived effect (which debuffs remain active).
+  In-memory per session, not persisted across restarts, same as `core/`'s
+  turn counter. The planned environmental `effectId` resolution (Beta
+  Preparation below) is expected to reuse this same duration model once
+  built.
 - **`io/`** (`src/io/cli.ts`) — a CLI chat loop (`npm run play`) combining
   play and an AI-perception inspector:
   `--experience <dir> --model <path> --character <id> [--db <path>] [--debug]`.
@@ -601,14 +616,21 @@ repeating a rejected `hakai` attempt across turns produces narrative-only
 rejections on strikes 1–2, a severity-1-only `debuff.applied` event on
 strike 3, a severity-≤2-eligible one on strike 4 (and so on, stacking),
 and `getState`'s `activeDebuffs` correctly drops each debuff once its
-`expiresAtTurn` has passed. Also verified `resolveEffectDefs`'s per-entry
+`expiresAtUnit` has passed (verified against an injected fake clock, not
+real sleeps — see `timeline/`'s injectable `now` below). Also verified
+`resolveEffectDefs`'s per-entry
 fallback: a custom Experience-declared effect list can override a default
 id (e.g. redefine `exposed`), add new higher-severity effects, and still
 falls back to any default id it didn't touch (e.g. `weakened`,
 `battered`). Also verified `resolveEscalationConfig`'s per-field fallback:
 an Experience declaring only `strikeThreshold: 1` escalates on the very
-first rejection while `maxSeverity`/`debuffDurationTurns` still resolve
-from `DEFAULT_ESCALATION_CONFIG`. Also verified `state/`'s
+first rejection while `maxSeverity`/`debuffDurationUnits` still resolve
+from `DEFAULT_ESCALATION_CONFIG`. Also verified, with an injected fake
+clock via `timeline/`'s `createTimeline(now)`, that a debuff's real-world
+duration is entirely decoupled from turn count: 3 strikes taken instantly
+(no elapsed real time between them) still produced a debuff that stayed
+active right up to `debuffDurationUnits - 1` and expired exactly at
+`debuffDurationUnits`. Also verified `state/`'s
 `computeEffectiveStats`: two stacked `armorClassDelta` debuffs reduce
 Goku's effective armor class accordingly while his base sheet is
 untouched, `scope/`'s `effectiveStats` matches `state/`'s exactly, a
@@ -629,11 +651,13 @@ longer-tail backlog:
   (`ctx.loaded.ruleset.effects`/`EffectDefSchema`) rather than a separate
   vocabulary, and application will be **both** deterministic (auto-applied
   on arrival at a hazardous node, no AI judgment) **and** visible to
-  `rules/`'s tri-state judgment for situational nuance. Duration/expiry for
-  the applied effect is intentionally not yet designed — it's waiting on
-  the `timeline/` mechanism above (a real-time-anchored duration, distinct
-  from escalation debuffs' turn-count-based `expiresAtTurn`) rather than
-  reusing the turn-based model. Not yet implemented.
+  `rules/`'s tri-state judgment for situational nuance. Duration/expiry now
+  has a foundation to build on: `timeline/`'s real-wall-clock-anchored
+  units, the same mechanism escalation debuffs' `appliedAtUnit`/
+  `expiresAtUnit` now use (see `rejectAction` above) — an environmental
+  effect applied on arrival would reuse this exact shape. The application
+  logic itself (the move-arrival hook, the `rules/` prompt changes for
+  visibility) is not yet implemented.
 - **Item/inventory schema** — `interact`'s free-form description can
   already describe using an item, but `CharacterSheet` has no concept of
   carried items, so nothing structurally grounds "does this character

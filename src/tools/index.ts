@@ -4,6 +4,7 @@ import type { LoadedExperience } from "../data/loaders/experience.js";
 import type { CharacterSheet, EffectDef } from "../data/schemas/character.js";
 import { getState, type AppliedDebuff } from "../state/index.js";
 import { getScope, findNode, type Scope } from "../scope/index.js";
+import type { Timeline } from "../timeline/index.js";
 
 /** Outcome of an action, as decided by rules/ (see rules/index.ts). */
 export type ActionOutcome = "valid" | "neutral";
@@ -11,12 +12,15 @@ export type ActionOutcome = "valid" | "neutral";
 /**
  * Everything a tool handler needs to read engine state. Bound once per
  * session (a single Experience/playthrough) by whoever wires these into
- * the agentic loop — see ai/.
+ * the agentic loop — see ai/. `timeline` drives effect duration (see
+ * rejectAction) — a real-wall-clock-anchored clock, independent of turn
+ * count.
  */
 export interface ToolContext {
   dtm: Dtm;
   world: World;
   loaded: LoadedExperience;
+  timeline: Timeline;
 }
 
 /** A proposed action, as committed to by the AI this turn (see ai/). */
@@ -65,7 +69,7 @@ export function getScopeTool(
   params: { characterId: string },
   currentTurn: number,
 ): Scope {
-  const state = getState(ctx.dtm, ctx.loaded, currentTurn);
+  const state = getState(ctx.dtm, ctx.loaded, currentTurn, ctx.timeline.currentUnit());
   return getScope(ctx.world, state, params.characterId);
 }
 
@@ -118,7 +122,7 @@ function checkMove(
   ctx: ToolContext,
   action: Extract<Action, { type: "move" }>,
 ): ActionCheck {
-  const state = getState(ctx.dtm, ctx.loaded, action.timestamp);
+  const state = getState(ctx.dtm, ctx.loaded, action.timestamp, ctx.timeline.currentUnit());
   const character = state.characters.find((c) => c.sheet.id === action.characterId);
   if (!character) {
     return { allowed: false, reason: `Character "${action.characterId}" not found` };
@@ -209,7 +213,7 @@ function checkInteract(
     return { allowed: true };
   }
 
-  const state = getState(ctx.dtm, ctx.loaded, action.timestamp);
+  const state = getState(ctx.dtm, ctx.loaded, action.timestamp, ctx.timeline.currentUnit());
   const actor = state.characters.find((c) => c.sheet.id === action.characterId);
   if (!actor) {
     return { allowed: false, reason: `Character "${action.characterId}" not found` };
@@ -263,11 +267,15 @@ function pickEffect(effects: EffectDef[], ceiling: number): EffectDef {
  * accrues `ctx.loaded.escalation.strikeThreshold` rejections, this and every
  * further rejection also applies a random effect drawn from the
  * Experience's resolved effect pool (`ctx.loaded.ruleset.effects`),
- * expiring `escalation.debuffDurationTurns` turns later. The eligible
- * severity ceiling rises by 1 with each strike past the threshold (capped
- * at `escalation.maxSeverity`), so punishment trends harsher the longer
- * it's ignored without being fully deterministic. This is deterministic
- * bookkeeping, not a model judgment call.
+ * expiring `escalation.debuffDurationUnits` timeline/ units later (real-
+ * wall-clock-anchored — see timeline/index.ts — not turn count, so a
+ * debuff's real-world duration doesn't depend on how many turns the player
+ * takes). The eligible severity ceiling rises by 1 with each strike past
+ * the threshold (capped at `escalation.maxSeverity`), so punishment trends
+ * harsher the longer it's ignored without being fully deterministic. This
+ * is deterministic bookkeeping, not a model judgment call. `turnTimestamp`
+ * is only used for the dtm events' own `timestamp` column (turn count, for
+ * ordering) — unrelated to the debuff's timeline-based expiry.
  */
 export function rejectAction(
   ctx: ToolContext,
@@ -276,7 +284,7 @@ export function rejectAction(
   reason: string,
   turnTimestamp: number,
 ): RejectionResult {
-  const { strikeThreshold, maxSeverity, debuffDurationTurns } = ctx.loaded.escalation;
+  const { strikeThreshold, maxSeverity, debuffDurationUnits } = ctx.loaded.escalation;
 
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,
@@ -296,10 +304,11 @@ export function rejectAction(
 
   const severityCeiling = Math.min(maxSeverity, strikeCount - strikeThreshold + 1);
   const template = pickEffect(ctx.loaded.ruleset.effects, severityCeiling);
+  const appliedAtUnit = ctx.timeline.currentUnit();
   const debuffApplied: AppliedDebuff = {
     ...template,
-    appliedAtTurn: turnTimestamp,
-    expiresAtTurn: turnTimestamp + debuffDurationTurns,
+    appliedAtUnit,
+    expiresAtUnit: appliedAtUnit + debuffDurationUnits,
   };
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,

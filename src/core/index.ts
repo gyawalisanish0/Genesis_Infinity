@@ -46,7 +46,8 @@ function buildSystemPrompt(loaded: LoadedExperience): string {
 export async function createEngine(options: EngineOptions): Promise<Engine> {
   const loaded = await loadExperience(options.experienceDir);
   const dtm = new Dtm(options.dbPath);
-  const toolCtx: ToolContext = { dtm, world: loaded.world, loaded };
+  const timeline = createTimeline();
+  const toolCtx: ToolContext = { dtm, world: loaded.world, loaded, timeline };
 
   const aiSession = await createAiSession({
     modelPath: options.modelPath,
@@ -56,7 +57,6 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
   });
 
   let timestamp = 0;
-  const timeline = createTimeline();
 
   return {
     loaded,
