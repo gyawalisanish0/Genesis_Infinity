@@ -19,6 +19,20 @@ import { RuleValidator } from "../rules/index.js";
 import { NarrationAuditor } from "../audit/index.js";
 import { getState } from "../state/index.js";
 
+/**
+ * Small models occasionally emit the literal string "null"/"undefined"/
+ * "none" for an omitted optional field instead of leaving it out or using
+ * "" — observed in real testing against Llama-3.2-3B-Instruct, where a
+ * targetId of "null" caused a bogus "\"null\" not found" rejection instead
+ * of being treated as absent. Normalized at the tool-call boundary so
+ * tools/'s gates see an actually-absent value rather than a lookup target.
+ */
+const NULLISH_STRINGS = new Set(["null", "undefined", "none"]);
+function normalizeOptionalId(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return NULLISH_STRINGS.has(value.trim().toLowerCase()) ? undefined : value;
+}
+
 function describeAction(action: Action): string {
   switch (action.type) {
     case "move":
@@ -264,6 +278,12 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       },
       handler: async (params) => {
         const action: Action = { ...params, timestamp: turn.timestamp };
+        if ("targetId" in action) {
+          action.targetId = normalizeOptionalId(action.targetId);
+        }
+        if ("itemId" in action) {
+          action.itemId = normalizeOptionalId(action.itemId);
+        }
 
         const check = checkAction(options.toolCtx, action);
         if (!check.allowed) {
