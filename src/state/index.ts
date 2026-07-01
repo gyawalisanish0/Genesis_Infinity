@@ -2,13 +2,61 @@ import type { Dtm } from "../dtm/index.js";
 import type { LoadedExperience } from "../data/loaders/experience.js";
 import type { CharacterSheet } from "../data/schemas/character.js";
 
+/** A mechanical debuff the engine can apply — see DEBUFF_POOL. */
+export interface DebuffTemplate {
+  id: string;
+  name: string;
+  description: string;
+  armorClassDelta?: number;
+  maxHitPointsDelta?: number;
+}
+
+/** A DebuffTemplate as actually applied to a character at a point in time. */
+export interface AppliedDebuff extends DebuffTemplate {
+  appliedAtTurn: number;
+  expiresAtTurn: number;
+}
+
+/**
+ * Fixed pool of mechanical debuffs the engine draws from at random as
+ * escalating punishment for a character's repeated invalid action attempts
+ * (see tools/'s rejectAction). Deliberately restricted to armorClass and
+ * hitPoints.max — the only numeric combat fields every CharacterSheet is
+ * guaranteed to have; abilities/skills are Experience-defined with
+ * arbitrary ids, so an engine-level debuff can't safely reference them.
+ */
+export const DEBUFF_POOL: DebuffTemplate[] = [
+  {
+    id: "exposed",
+    name: "Exposed",
+    description: "A conspicuous opening in their guard from the failed attempt.",
+    armorClassDelta: -2,
+  },
+  {
+    id: "weakened",
+    name: "Weakened",
+    description: "The failed attempt saps their stamina.",
+    maxHitPointsDelta: -5,
+  },
+  {
+    id: "battered",
+    name: "Battered",
+    description: "Repeated failure leaves them off-balance and worn down.",
+    armorClassDelta: -1,
+    maxHitPointsDelta: -3,
+  },
+];
+
 export interface CharacterState {
   sheet: CharacterSheet;
   nodeId: string;
+  /** Currently active (non-expired) debuffs on this character. */
+  activeDebuffs: AppliedDebuff[];
 }
 
 export interface StateSnapshot {
   experienceId: string;
+  currentTurn: number;
   characters: CharacterState[];
 }
 
@@ -26,12 +74,28 @@ function currentNodeId(
   return last?.nodeId ?? startingNodeId;
 }
 
+/** A character's currently active (non-expired as of currentTurn) debuffs. */
+function activeDebuffsFor(
+  dtm: Dtm,
+  experienceId: string,
+  characterId: string,
+  currentTurn: number,
+): AppliedDebuff[] {
+  return dtm
+    .forEntity(experienceId, characterId)
+    .filter((event) => event.type === "debuff.applied")
+    .map((event) => event.payload as AppliedDebuff)
+    .filter((debuff) => debuff.expiresAtTurn > currentTurn);
+}
+
 /**
  * Computes the current state snapshot for a loaded Experience: every
- * character's sheet plus their current node, derived from dtm/ rather than
- * stored independently (see docs/ARCHITECTURE.md, "State").
+ * character's sheet, current node, and active debuffs, derived from dtm/
+ * rather than stored independently (see docs/ARCHITECTURE.md, "State").
+ * `currentTurn` is the engine's turn counter, used to filter out expired
+ * debuffs.
  */
-export function getState(dtm: Dtm, loaded: LoadedExperience): StateSnapshot {
+export function getState(dtm: Dtm, loaded: LoadedExperience, currentTurn: number): StateSnapshot {
   const startingNodeIds = new Map(
     (loaded.experience.characters ?? []).map((placement) => [
       placement.characterId,
@@ -47,8 +111,9 @@ export function getState(dtm: Dtm, loaded: LoadedExperience): StateSnapshot {
     return {
       sheet,
       nodeId: currentNodeId(dtm, loaded.experience.id, sheet.id, startingNodeId),
+      activeDebuffs: activeDebuffsFor(dtm, loaded.experience.id, sheet.id, currentTurn),
     };
   });
 
-  return { experienceId: loaded.experience.id, characters };
+  return { experienceId: loaded.experience.id, currentTurn, characters };
 }

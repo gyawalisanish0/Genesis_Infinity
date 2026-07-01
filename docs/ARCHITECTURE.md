@@ -358,12 +358,18 @@ design above for beta scope.
 - **`dtm/`** (`src/dtm/index.ts`) — implements the `dtm_events` schema above
   via `node:sqlite`'s `DatabaseSync`, with no ORM (see DTM section above for
   the resolved query interface).
-- **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded)` returns a
-  `StateSnapshot`: every character's sheet plus current `nodeId`, derived by
-  reading each character's most recent position-bearing dtm event
-  (`dtm.lastPosition`), falling back to the Experience's declared
-  `startingNodeId` if none exists yet. Confirms the "state is a derived
-  view, never independently stored" principle above.
+- **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded, currentTurn)`
+  returns a `StateSnapshot`: every character's sheet, current `nodeId`
+  (derived from `dtm.lastPosition`, falling back to the Experience's
+  declared `startingNodeId`), and `activeDebuffs` — non-expired mechanical
+  debuffs derived from `debuff.applied` dtm events, filtered by
+  `expiresAtTurn > currentTurn`. Confirms the "state is a derived view,
+  never independently stored" principle above. Also exports `DEBUFF_POOL`,
+  a fixed set of engine-level debuff templates (`exposed`: -2 armor class,
+  `weakened`: -5 max HP, `battered`: both) used by `tools/`'s escalation
+  mechanism — deliberately restricted to `armorClass`/`hitPoints.max`,
+  the only numeric combat fields every `CharacterSheet` is guaranteed to
+  have, since abilities/skills are Experience-defined with arbitrary ids.
 - **`scope/`** (`src/scope/index.ts`) — `getScope(world, state, characterId)`
   returns a character's current node (merged environmental codes per the
   node-overrides-region rule above, and connections with **computed**
@@ -392,20 +398,37 @@ design above for beta scope.
       technique called "hakai"`) — an unknown technique never reaches
       `rules/` for a legality judgment, since knowing/not-knowing a
       technique isn't a judgment call.
-    - `applyAction` — runs only after both `checkAction` and `rules/`
-      approve, and appends the resulting dtm event (`entity.moved` for
-      `move`, `technique.used` with a `{techniqueId, targetId}` payload
-      for `use_technique`).
-    Both return `{success: false, reason}`/`{allowed: false, reason}`
-    rather than throwing on a rejected action.
+    - `applyAction(ctx, action, outcome)` — runs only after both
+      `checkAction` and `rules/` approve, and appends the resulting dtm
+      event (`entity.moved` for `move`, `technique.used` with a
+      `{techniqueId, targetId}` payload for `use_technique`), tagged with
+      `outcome` (`"valid"` or `"neutral"`, per `rules/`'s tri-state
+      judgment below).
+    - `rejectAction(ctx, characterId, actionType, reason, turn)` — the
+      escalation path, called whenever `checkAction` fails or `rules/`
+      judges an action `"invalid"`. Appends an `action.rejected` dtm
+      event, then counts that character's total rejections; once the
+      count reaches `STRIKE_THRESHOLD` (3), this and every further
+      rejection also appends a `debuff.applied` event — a random template
+      from `state/`'s `DEBUFF_POOL`, expiring `DEBUFF_DURATION_TURNS` (5)
+      turns later. This is deterministic bookkeeping, not a model
+      judgment call — it fires the same way whether the rejection came
+      from the hard capability gate or `rules/`'s situational judgment.
+    Both `applyAction`/`rejectAction` return `{success: false, reason}`
+    shapes rather than throwing on a rejected action.
 - **`rules/`** (`src/rules/index.ts`) — `RuleValidator` implements the
   "separate validation prompt" approach: its own `LlamaChatSession` on a
   dedicated `LlamaContextSequence` (sharing the loaded model/context with
   the narrative session, but not its chat history), reset before every
-  call so each validation is stateless. The model's response is forced into
-  `{valid: boolean, reason: string}` via a grammar built from
-  `llama.createGrammarForJsonSchema`. Called by `ai/`'s `action` handler
-  only for actions that already passed `tools/`'s `checkAction`.
+  call so each validation is stateless. The model's response is forced
+  into a tri-state `{outcome: "valid" | "neutral" | "invalid", reason:
+  string}` via a grammar built from `llama.createGrammarForJsonSchema`
+  (GBNF `enum`) — `"valid"` succeeds as attempted, `"neutral"` is a fizzle
+  (attempted, but doesn't fully succeed given current state/conditions —
+  not a rejection), `"invalid"` doesn't happen at all. The state passed to
+  the model includes each character's `activeDebuffs`, so the judgment can
+  factor in prior escalation. Called by `ai/`'s `action` handler only for
+  actions that already passed `tools/`'s `checkAction`.
 - **`ai/`** (`src/ai/index.ts`) — `createAiSession(...)` loads the model,
   opens one `LlamaContext`, and draws two sequences from it: one for the
   narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`. Declares
@@ -416,15 +439,19 @@ design above for beta scope.
   `session.prompt(input, {functions})` (see the Turn Flow beta deviation
   above re: the uncapped loop). The `action` handler funnels every call
   through `checkAction` → `rules/`'s `RuleValidator.validate` →
-  `applyAction` in sequence, short-circuiting on the first rejection. Each
-  tool handler is wrapped by a `record()` helper that invokes an optional
-  `onToolCall?: (call) => void` callback — this is how `io/`'s debug-dump
-  mode observes tool calls without `ai/` depending on `io/`.
+  `applyAction`/`rejectAction`, short-circuiting to `rejectAction` on the
+  first rejection from either stage. Each tool handler is wrapped by a
+  `record()` helper that invokes an optional `onToolCall?: (call) => void`
+  callback — this is how `io/`'s debug-dump mode observes tool calls
+  without `ai/` depending on `io/`.
 - **`core/`** (`src/core/index.ts`) — `createEngine(options)` assembles a
   playable Experience: loads data, opens `dtm/`, starts the `ai/` session,
   and exposes `takeTurn(input)`, which increments a per-turn timestamp
-  counter and forwards to `ai/`. This counter is "engine time" per the DTM
-  section above — a simple incrementing count, not wall-clock time.
+  counter and forwards to `ai/`, plus `currentTurn()` to read that counter
+  without advancing it (used by `io/`'s debug-dump mode so its `state/`
+  reads see the same turn the engine is currently on). This counter is
+  "engine time" per the DTM section above — a simple incrementing count,
+  not wall-clock time.
 - **`io/`** (`src/io/cli.ts`) — a CLI chat loop (`npm run play`) combining
   play and an AI-perception inspector:
   `--experience <dir> --model <path> --character <id> [--db <path>] [--debug]`.
@@ -453,7 +480,13 @@ correct connections/direction/`othersPresent`, a valid move updates `dtm/`
 and is reflected in the next `getState`/`getScope` call, an invalid move
 target fails gracefully instead of throwing, a technique the character's
 sheet lists succeeds, and a technique not on the sheet (e.g. Goku attempting
-`hakai`) is rejected by the capability gate before any model call.
+`hakai`) is rejected by the capability gate before any model call. Also
+verified the escalation path directly against `tools/`'s `rejectAction`:
+repeating a rejected `hakai` attempt across turns produces narrative-only
+rejections on strikes 1–2, a random `debuff.applied` event on strike 3
+(and a further one on strike 4, stacking), and `getState`'s
+`activeDebuffs` correctly drops each debuff once its `expiresAtTurn` has
+passed.
 
 ---
 

@@ -2,8 +2,16 @@ import type { Dtm, DtmEvent } from "../dtm/index.js";
 import type { World } from "../data/schemas/world.js";
 import type { LoadedExperience } from "../data/loaders/experience.js";
 import type { CharacterSheet } from "../data/schemas/character.js";
-import { getState } from "../state/index.js";
+import { getState, DEBUFF_POOL, type AppliedDebuff } from "../state/index.js";
 import { getScope, findNode, type Scope } from "../scope/index.js";
+
+/** Outcome of an action, as decided by rules/ (see rules/index.ts). */
+export type ActionOutcome = "valid" | "neutral";
+
+/** Number of rejected actions a character can accrue before punishment starts. */
+const STRIKE_THRESHOLD = 3;
+/** How many turns a punishment debuff remains active once applied. */
+const DEBUFF_DURATION_TURNS = 5;
 
 /**
  * Everything a tool handler needs to read engine state. Bound once per
@@ -37,11 +45,25 @@ export interface ActionResult {
   reason?: string;
   nodeId?: string;
   techniqueId?: string;
+  outcome?: ActionOutcome;
+}
+
+export interface RejectionResult {
+  success: false;
+  reason: string;
+  /** Total rejected actions this character has accrued (including this one). */
+  strikeCount: number;
+  /** Present once strikeCount reaches STRIKE_THRESHOLD — the punishment applied this time. */
+  debuffApplied?: AppliedDebuff;
 }
 
 /** Check tool: the AI-visible scope (location, environment, connections, who's present) for a character. */
-export function getScopeTool(ctx: ToolContext, params: { characterId: string }): Scope {
-  const state = getState(ctx.dtm, ctx.loaded);
+export function getScopeTool(
+  ctx: ToolContext,
+  params: { characterId: string },
+  currentTurn: number,
+): Scope {
+  const state = getState(ctx.dtm, ctx.loaded, currentTurn);
   return getScope(ctx.world, state, params.characterId);
 }
 
@@ -66,7 +88,7 @@ function checkMove(
   ctx: ToolContext,
   action: Extract<Action, { type: "move" }>,
 ): ActionCheck {
-  const state = getState(ctx.dtm, ctx.loaded);
+  const state = getState(ctx.dtm, ctx.loaded, action.timestamp);
   const character = state.characters.find((c) => c.sheet.id === action.characterId);
   if (!character) {
     return { allowed: false, reason: `Character "${action.characterId}" not found` };
@@ -86,15 +108,20 @@ function checkMove(
   return { allowed: true };
 }
 
-function applyMove(ctx: ToolContext, action: Extract<Action, { type: "move" }>): ActionResult {
+function applyMove(
+  ctx: ToolContext,
+  action: Extract<Action, { type: "move" }>,
+  outcome: ActionOutcome,
+): ActionResult {
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,
     timestamp: action.timestamp,
     type: "entity.moved",
     entityId: action.characterId,
     nodeId: action.targetNodeId,
+    payload: { outcome },
   });
-  return { success: true, nodeId: action.targetNodeId };
+  return { success: true, nodeId: action.targetNodeId, outcome };
 }
 
 /**
@@ -125,15 +152,64 @@ function checkUseTechnique(
 function applyUseTechnique(
   ctx: ToolContext,
   action: Extract<Action, { type: "use_technique" }>,
+  outcome: ActionOutcome,
 ): ActionResult {
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,
     timestamp: action.timestamp,
     type: "technique.used",
     entityId: action.characterId,
-    payload: { techniqueId: action.techniqueId, targetId: action.targetId },
+    payload: { techniqueId: action.techniqueId, targetId: action.targetId, outcome },
   });
-  return { success: true, techniqueId: action.techniqueId };
+  return { success: true, techniqueId: action.techniqueId, outcome };
+}
+
+/**
+ * Records a rejected action attempt — from checkAction's hard capability
+ * gate, or rules/'s "invalid" judgment — and escalates: once a character
+ * accrues STRIKE_THRESHOLD rejections, this and every further rejection
+ * also applies a random mechanical debuff drawn from state/'s fixed
+ * DEBUFF_POOL, expiring DEBUFF_DURATION_TURNS turns later. This is
+ * deterministic bookkeeping, not a model judgment call.
+ */
+export function rejectAction(
+  ctx: ToolContext,
+  characterId: string,
+  actionType: string,
+  reason: string,
+  turnTimestamp: number,
+): RejectionResult {
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: turnTimestamp,
+    type: "action.rejected",
+    entityId: characterId,
+    payload: { actionType, reason },
+  });
+
+  const strikeCount = ctx.dtm
+    .forEntity(ctx.loaded.experience.id, characterId)
+    .filter((event) => event.type === "action.rejected").length;
+
+  if (strikeCount < STRIKE_THRESHOLD) {
+    return { success: false, reason, strikeCount };
+  }
+
+  const template = DEBUFF_POOL[Math.floor(Math.random() * DEBUFF_POOL.length)];
+  const debuffApplied: AppliedDebuff = {
+    ...template,
+    appliedAtTurn: turnTimestamp,
+    expiresAtTurn: turnTimestamp + DEBUFF_DURATION_TURNS,
+  };
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: turnTimestamp,
+    type: "debuff.applied",
+    entityId: characterId,
+    payload: debuffApplied,
+  });
+
+  return { success: false, reason, strikeCount, debuffApplied };
 }
 
 /**
@@ -153,13 +229,18 @@ export function checkAction(ctx: ToolContext, action: Action): ActionCheck {
 
 /**
  * Applies an action that has already passed checkAction and rules/
- * validation — writes the resulting dtm event.
+ * validation — writes the resulting dtm event. `outcome` distinguishes a
+ * full success ("valid") from a fizzle ("neutral") per rules/'s judgment.
  */
-export function applyAction(ctx: ToolContext, action: Action): ActionResult {
+export function applyAction(
+  ctx: ToolContext,
+  action: Action,
+  outcome: ActionOutcome,
+): ActionResult {
   switch (action.type) {
     case "move":
-      return applyMove(ctx, action);
+      return applyMove(ctx, action, outcome);
     case "use_technique":
-      return applyUseTechnique(ctx, action);
+      return applyUseTechnique(ctx, action, outcome);
   }
 }

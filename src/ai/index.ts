@@ -11,6 +11,7 @@ import {
   getRecentDtmTool,
   checkAction,
   applyAction,
+  rejectAction,
 } from "../tools/index.js";
 import { RuleValidator } from "../rules/index.js";
 import { getState } from "../state/index.js";
@@ -79,7 +80,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         type: "object",
         properties: { characterId: { type: "string" } },
       },
-      handler: (params) => record("get_scope", params, getScopeTool(options.toolCtx, params)),
+      handler: (params) =>
+        record("get_scope", params, getScopeTool(options.toolCtx, params, turn.timestamp)),
     }),
     get_character_sheet: defineChatSessionFunction({
       description: "Get a character's static sheet: identity, abilities, and skills.",
@@ -134,19 +136,33 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
         const check = checkAction(options.toolCtx, action);
         if (!check.allowed) {
-          return record("action", params, { success: false, reason: check.reason });
+          const result = rejectAction(
+            options.toolCtx,
+            action.characterId,
+            action.type,
+            check.reason ?? "not allowed",
+            action.timestamp,
+          );
+          return record("action", params, result);
         }
 
-        const state = getState(options.toolCtx.dtm, options.toolCtx.loaded);
+        const state = getState(options.toolCtx.dtm, options.toolCtx.loaded, action.timestamp);
         const validation = await ruleValidator.validate(
           { type: action.type, characterId: action.characterId, description: describeAction(action) },
           state,
         );
-        if (!validation.valid) {
-          return record("action", params, { success: false, reason: validation.reason });
+        if (validation.outcome === "invalid") {
+          const result = rejectAction(
+            options.toolCtx,
+            action.characterId,
+            action.type,
+            validation.reason,
+            action.timestamp,
+          );
+          return record("action", params, result);
         }
 
-        return record("action", params, applyAction(options.toolCtx, action));
+        return record("action", params, applyAction(options.toolCtx, action, validation.outcome));
       },
     }),
   };

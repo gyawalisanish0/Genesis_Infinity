@@ -14,6 +14,8 @@ export interface EngineOptions {
 export interface Engine {
   loaded: LoadedExperience;
   toolCtx: ToolContext;
+  /** The engine's current turn counter (see dtm/'s "engine time"). */
+  currentTurn(): number;
   /** Sends one user turn through the agentic loop, advancing engine time by one. */
   takeTurn(input: string): Promise<string>;
   dispose(): Promise<void>;
@@ -51,6 +53,7 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
   return {
     loaded,
     toolCtx,
+    currentTurn: () => timestamp,
     async takeTurn(input: string) {
       timestamp += 1;
       return aiSession.prompt(input, timestamp);

@@ -59,8 +59,13 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
-function printScope(label: string, toolCtx: ToolContext, characterId: string): void {
-  const state = getState(toolCtx.dtm, toolCtx.loaded);
+function printScope(
+  label: string,
+  toolCtx: ToolContext,
+  characterId: string,
+  currentTurn: number,
+): void {
+  const state = getState(toolCtx.dtm, toolCtx.loaded, currentTurn);
   const scope = getScope(toolCtx.world, state, characterId);
   console.log(`\n--- ${label} ---`);
   console.log(JSON.stringify(scope, null, 2));
@@ -99,7 +104,7 @@ async function main(): Promise<void> {
       if (input.trim().toLowerCase() === "exit") break;
 
       if (args.debug) {
-        printScope("scope before turn", engine.toolCtx, args.characterId);
+        printScope("scope before turn", engine.toolCtx, args.characterId, engine.currentTurn());
       }
 
       toolCalls.length = 0;
@@ -107,7 +112,7 @@ async function main(): Promise<void> {
 
       if (args.debug) {
         printToolCalls(toolCalls);
-        printScope("scope after turn", engine.toolCtx, args.characterId);
+        printScope("scope after turn", engine.toolCtx, args.characterId, engine.currentTurn());
       }
 
       console.log(`\n${response}\n`);
