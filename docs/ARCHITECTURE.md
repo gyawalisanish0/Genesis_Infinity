@@ -111,24 +111,39 @@ nodes** (the actual visitable locations). Schema defined in
   - **Skills** — D&D-style baseline list (~18 skills, each referencing a
     governing ability id) provided as a template (`DEFAULT_SKILLS`), also
     overridable/extensible per Experience.
+  - **Techniques** — named things a character actually knows how to do
+    (`TechniqueDefSchema`: `{id, name, description}`), declared per-character
+    with no ruleset-level template or default list (unlike abilities/skills,
+    which are Experience-wide). This is the hard capability gate for
+    `tools/`'s `use_technique` action: a character can only attempt a
+    technique on their own list — checked structurally, before the attempt
+    ever reaches `rules/` (see Beta Implementation below).
   - **Class / race / background** — open strings, not fixed enums, so
     non-fantasy settings aren't forced into D&D-specific content.
   - **No derived-stat formulas** — ability scores, skill values, hit points,
     and armor class are all raw stored values. There's no D&D-style
     modifier/proficiency formula baked into the schema; if `rules/` needs a
     derived value, it computes one at resolution time.
-  - Validation: ability and skill IDs must be unique within a sheet, and a
-    skill's `governingAbilityId` must reference a real ability on that sheet.
+  - Validation: ability, skill, and technique IDs must each be unique within
+    a sheet, and a skill's `governingAbilityId` must reference a real
+    ability on that sheet.
 
 #### Ruleset Declaration & Fallback
 
-An Experience can declare its own ability/skill/effect *definitions* (id +
-name, and for skills, an optional `governingAbilityId`; for effects, a
-`severity` and stat deltas — see **Escalation Effects** below), plus
-**escalation tuning** (see **Escalation Config** below) — this is the
-ruleset template a character's abilities/skills draw their ids from, and the
-pool/parameters `tools/`'s escalation system draws debuffs from, distinct
-from a character's own stored scores/values.
+An Experience can declare two kinds of ruleset content, both optional and
+both falling back to engine defaults if absent:
+
+- **Definitions** — id-keyed lists a character's own data draws its ids
+  from: ability/skill *definitions* (id + name, and for skills an optional
+  `governingAbilityId`), and effect *definitions* for escalation (id + name
+  + description + `severity` + stat deltas — see **Escalation Effects**
+  below).
+- **Escalation tuning** — flat settings for `tools/`'s escalation system
+  itself (how many strikes before punishment, how harsh, how long it
+  lasts) — see **Escalation Config** below.
+
+Both are distinct from a character's own stored scores/values, which live
+on the `CharacterSheet` itself, not the Experience.
 
 - Schema: `ExperienceSchema` in `src/data/schemas/experience.ts` (Zod),
   currently scoped to `abilities`/`skills`/`effects`/`escalation`

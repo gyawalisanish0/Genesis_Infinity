@@ -90,7 +90,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         record("get_scope", params, getScopeTool(options.toolCtx, params, turn.timestamp)),
     }),
     get_character_sheet: defineChatSessionFunction({
-      description: "Get a character's static sheet: identity, abilities, and skills.",
+      description:
+        "Get a character's static sheet: identity, abilities, skills, and known techniques.",
       params: {
         type: "object",
         properties: { characterId: { type: "string" } },
