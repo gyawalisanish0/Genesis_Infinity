@@ -23,6 +23,8 @@ export interface ScopedCharacter {
 
 export interface Scope {
   character: CharacterState["sheet"];
+  /** armorClass/hitPoints with active debuffs' deltas applied — see state/'s computeEffectiveStats. */
+  effectiveStats: CharacterState["effectiveStats"];
   node: ScopedNode;
   othersPresent: ScopedCharacter[];
 }
@@ -91,7 +93,8 @@ function directionBetween(from: NodeLocation, to: NodeLocation): string {
 /**
  * Computes the AI-visible scope for a character this turn: their current
  * node (merged environmental codes, connections with computed direction),
- * and which other characters are present at the same node.
+ * their debuff-adjusted effective stats, and which other characters are
+ * present at the same node.
  */
 export function getScope(world: World, state: StateSnapshot, characterId: string): Scope {
   const character = state.characters.find((c) => c.sheet.id === characterId);
@@ -116,6 +119,7 @@ export function getScope(world: World, state: StateSnapshot, characterId: string
 
   return {
     character: character.sheet,
+    effectiveStats: character.effectiveStats,
     node: {
       id: from.node.id,
       name: from.node.name,

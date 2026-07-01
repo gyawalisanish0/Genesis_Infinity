@@ -409,23 +409,31 @@ design above for beta scope.
 - **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded, currentTurn)`
   returns a `StateSnapshot`: every character's sheet, current `nodeId`
   (derived from `dtm.lastPosition`, falling back to the Experience's
-  declared `startingNodeId`), and `activeDebuffs` — non-expired
-  `AppliedDebuff`s (an `EffectDef` plus `appliedAtTurn`/`expiresAtTurn`)
-  derived from `debuff.applied` dtm events, filtered by `expiresAtTurn >
-  currentTurn`. Confirms the "state is a derived view, never independently
-  stored" principle above. The effect pool itself now lives in
-  `loaded.ruleset.effects` (Experience-resolved, see Ruleset Declaration &
-  Fallback above) rather than as a `state/`-owned constant.
+  declared `startingNodeId`), `activeDebuffs` — non-expired `AppliedDebuff`s
+  (an `EffectDef` plus `appliedAtTurn`/`expiresAtTurn`) derived from
+  `debuff.applied` dtm events, filtered by `expiresAtTurn > currentTurn` —
+  and `effectiveStats`, `computeEffectiveStats`'s result: the sheet's
+  `armorClass`/`hitPoints` with `activeDebuffs`' deltas summed in (max HP
+  floored at 0, current HP clamped down if the effective max drops below
+  it). Confirms the "state is a derived view, never independently stored"
+  principle above. The effect pool itself lives in `loaded.ruleset.effects`
+  (Experience-resolved, see Ruleset Declaration & Fallback above) rather
+  than as a `state/`-owned constant. Computing `effectiveStats` in `state/`
+  rather than leaving `rules/` to sum deltas out of `activeDebuffs` itself
+  follows the same principle as `scope/`'s computed direction below: a fact
+  the engine hands the AI, not something left for it to derive.
 - **`scope/`** (`src/scope/index.ts`) — `getScope(world, state, characterId)`
   returns a character's current node (merged environmental codes per the
   node-overrides-region rule above, and connections with **computed**
-  direction), plus which other characters are co-located
-  (`othersPresent`). Direction is an 8-point compass computed from
-  same-region local-position deltas, or region-position deltas when
-  comparing nodes across regions (local sub-grids are unbounded and not
-  comparable cross-region); two nodes at the same position on different
-  layers resolve to `"up"`/`"down"`. An edge's authored `direction`
-  override, when present, still wins over the computed value.
+  direction), their `effectiveStats` (see `state/` above — this is how the
+  AI actually sees debuff-adjusted stats, via `get_scope`), plus which other
+  characters are co-located (`othersPresent`). Direction is an 8-point
+  compass computed from same-region local-position deltas, or
+  region-position deltas when comparing nodes across regions (local
+  sub-grids are unbounded and not comparable cross-region); two nodes at
+  the same position on different layers resolve to `"up"`/`"down"`. An
+  edge's authored `direction` override, when present, still wins over the
+  computed value.
 - **`tools/`** (`src/tools/index.ts`) — the beta check + action tool set:
   - `get_scope` (check) — wraps `scope/`'s `getScope`.
   - `get_character_sheet` (check) — looks up a loaded character's sheet.
@@ -582,7 +590,37 @@ falls back to any default id it didn't touch (e.g. `weakened`,
 `battered`). Also verified `resolveEscalationConfig`'s per-field fallback:
 an Experience declaring only `strikeThreshold: 1` escalates on the very
 first rejection while `maxSeverity`/`debuffDurationTurns` still resolve
-from `DEFAULT_ESCALATION_CONFIG`.
+from `DEFAULT_ESCALATION_CONFIG`. Also verified `state/`'s
+`computeEffectiveStats`: two stacked `armorClassDelta` debuffs reduce
+Goku's effective armor class accordingly while his base sheet is
+untouched, `scope/`'s `effectiveStats` matches `state/`'s exactly, a
+character with no active debuffs shows effective stats identical to its
+base sheet, and a sheet declaring neither `armorClass` nor `hitPoints`
+resolves to an empty `effectiveStats` rather than throwing.
+
+### Beta Preparation
+
+Concrete next targets for the beta slice, called out ahead of the rest of
+Open/Deferred below since they're the planned next work rather than
+longer-tail backlog:
+
+- **`effectId` vocabulary and `rules/` effect resolution** — `EnvironmentalCode`
+  (World section above) already carries an `effectId` when `mechanical` is
+  true, but nothing yet gives that id meaning: no vocabulary of concrete
+  environmental effects (e.g. a hazard that deals damage over time, or
+  blinds) and no resolution step in `rules/` that looks up and applies one.
+  This is a distinct mechanism from `tools/`'s escalation debuffs above —
+  world/environment-driven rather than punishment for invalid player
+  actions — though it would likely reuse the same `EffectiveStats`/
+  `armorClassDelta`/`maxHitPointsDelta` shape once character-affecting.
+- **Item/inventory schema** — `interact`'s free-form description can
+  already describe using an item, but `CharacterSheet` has no concept of
+  carried items, so nothing structurally grounds "does this character
+  actually have that item" the way `techniques` grounds `use_technique`.
+  Likely mirrors `TechniqueDefSchema`'s shape (per-character, no
+  ruleset-level template — an `items: ItemDefSchema[]` field), with
+  `checkAction`'s `interact` case gaining a similar, lighter capability
+  check when a described action names a specific carried item.
 
 ---
 
@@ -619,13 +657,3 @@ from `DEFAULT_ESCALATION_CONFIG`.
 - Hardware capability detection method
 - RAM/VRAM threshold logic for automatic SAL vs MML selection
 - Context handoff format passed between models in SAL
-- `effectId` vocabulary and how `rules/` resolves/registers effects
-- **Debuffs are logged but not yet mechanically live** — `state/`'s
-  `activeDebuffs` surfaces `armorClassDelta`/`maxHitPointsDelta` in the
-  snapshot the model reads, but nothing yet computes an actual "effective"
-  armor class or max HP from a sheet plus its active debuffs; no consumer
-  reads/uses those deltas. Escalation currently only has narrative weight.
-- **No item/inventory schema** — `interact`'s free-form description can
-  describe using an item, but `CharacterSheet` has no concept of carried
-  items, so nothing structurally grounds "does this character actually
-  have that item."
