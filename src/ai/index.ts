@@ -9,6 +9,7 @@ import {
   getScopeTool,
   getCharacterSheetTool,
   getRecentDtmTool,
+  sayTool,
   checkAction,
   applyAction,
   rejectAction,
@@ -100,6 +101,25 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       },
       handler: (params) =>
         record("get_recent_dtm", params, getRecentDtmTool(options.toolCtx, params)),
+    }),
+    say: defineChatSessionFunction({
+      description:
+        "Have a character say something out loud — dialogue, taunts, questions, " +
+        "declarations. Always permitted and recorded in history; unlike `action`, " +
+        "this has no capability or legality gate.",
+      params: {
+        type: "object",
+        properties: {
+          characterId: { type: "string" },
+          message: { type: "string" },
+          targetId: {
+            type: "string",
+            description: "Character being spoken to, or an empty string if said to no one in particular.",
+          },
+        },
+      },
+      handler: (params) =>
+        record("say", params, sayTool(options.toolCtx, params, turn.timestamp)),
     }),
     action: defineChatSessionFunction({
       description:

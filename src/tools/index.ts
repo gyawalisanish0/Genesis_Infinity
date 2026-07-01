@@ -84,6 +84,34 @@ export function getRecentDtmTool(ctx: ToolContext, params: { limit: number }): D
   return ctx.dtm.recent(ctx.loaded.experience.id, params.limit);
 }
 
+export interface SayResult {
+  success: true;
+  message: string;
+}
+
+/**
+ * A character speaking — dialogue, taunts, questions, declarations. Always
+ * permitted: no checkAction/rules/ gate and no escalation on repeat, since
+ * speech has no capability or legality dimension the way move/use_technique
+ * do. Still written to dtm/ so it's part of the persistent history (see
+ * get_recent_dtm) — unlike the read-only check tools above, this is a write,
+ * but one that (unlike `action`) never needs validation.
+ */
+export function sayTool(
+  ctx: ToolContext,
+  params: { characterId: string; message: string; targetId?: string },
+  turnTimestamp: number,
+): SayResult {
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: turnTimestamp,
+    type: "character.said",
+    entityId: params.characterId,
+    payload: { message: params.message, targetId: params.targetId },
+  });
+  return { success: true, message: params.message };
+}
+
 function checkMove(
   ctx: ToolContext,
   action: Extract<Action, { type: "move" }>,

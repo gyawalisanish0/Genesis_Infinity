@@ -384,6 +384,16 @@ design above for beta scope.
   - `get_scope` (check) — wraps `scope/`'s `getScope`.
   - `get_character_sheet` (check) — looks up a loaded character's sheet.
   - `get_recent_dtm` (check) — wraps `dtm.recent`.
+  - `say` — a character speaking (dialogue, taunts, questions). Always
+    permitted: no `checkAction`/`rules/` gate, no escalation on repeat,
+    since speech has no capability or legality dimension the way
+    `move`/`use_technique` do. Still a write — appends a `character.said`
+    dtm event with `{message, targetId}` — so it persists in history, but
+    it's neither a read-only check tool nor a validated `action`; a third
+    category for world-changes the engine never needs to contest. This is
+    the current answer to "the closed `Action` union can't cover
+    everything" for the conversational slice specifically — attack/
+    use_item/investigate-style actions still have no tool yet.
   - `action` (action) — a single tool with a discriminated-union payload
     (`{type: "move", ...}` or `{type: "use_technique", ...}`), rather than
     one tool per action type. Two functions are exported per action type
