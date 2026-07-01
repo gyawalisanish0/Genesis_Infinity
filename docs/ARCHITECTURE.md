@@ -428,13 +428,38 @@ design above for beta scope.
 
 ### Scope
 
-- **Model loading:** Tier 1 only — a single local model, loaded once via
-  `node-llama-cpp`, handles narrative, tool-call decisions, and rule
-  validation. The Tier 2–5 specialized-model split and the SAL/MML loading
-  strategies above are not implemented; beta always loads one model and
-  keeps it resident for the session.
-- **Model backend:** `node-llama-cpp`, pointed at a user-supplied local GGUF
-  model path (`--model <path>` CLI arg). No other backend is wired in.
+- **Model loading:** Tier 1 only — a single model handles narrative,
+  tool-call decisions, and rule validation. The Tier 2–5 specialized-model
+  split and the SAL/MML loading strategies above are not implemented; beta
+  always loads one model (or opens one API-backed connection) and keeps it
+  resident for the session.
+- **Model backend: pluggable.** `ai/`'s turn loop, `rules/`'s
+  `RuleValidator`, and `audit/`'s `NarrationAuditor` all depend on a shared
+  `LlmDriver` interface (`src/ai/llmDriver.ts`) rather than on
+  `node-llama-cpp` directly, so the engine can run against either backend
+  without touching their logic:
+  - `llamaCppDriver.ts` — a local GGUF model via `node-llama-cpp`
+    (`--model <path>` CLI arg, `--backend llamaCpp`, the default).
+  - `apiDriver.ts` — any OpenAI-compatible chat completions API (Hugging
+    Face Inference Providers, OpenRouter, etc.) via `--backend api
+    --api-base-url <url> --api-model <id> --api-key-env <ENV_VAR_NAME>`.
+    The key itself is never a CLI argument — only the name of an
+    environment variable holding it. Since a raw HTTP chat completions API
+    doesn't run a tool-calling loop for you (unlike `LlamaChatSession`,
+    which drives the whole thing internally), `apiDriver.ts` reimplements
+    that loop manually: call the API, execute any requested tool calls,
+    feed results back as `role: "tool"` messages, repeat until the model
+    responds with plain text (capped at `maxToolRounds`, default 8, since
+    we now own this loop instead of node-llama-cpp owning it internally).
+    Structured JSON output (used by `RuleValidator`/`NarrationAuditor`)
+    tries strict `response_format: json_schema` first, falling back to a
+    looser `json_object` request with the schema described in the prompt
+    text if the provider/model doesn't honor strict mode — not every model
+    supports forced structured output the way GBNF grammars force it
+    locally, so this is treated as a real, model-dependent reliability gap
+    rather than assumed universal.
+  See `ai/`, `rules/`, and `audit/` below for how each depends on
+  `LlmDriver` rather than `node-llama-cpp` specifically.
 - **Package manager / runtime:** npm, TypeScript executed via `tsx` (no
   build step in beta).
 
@@ -624,13 +649,17 @@ design above for beta scope.
     Both `applyAction`/`rejectAction` return `{success: false, reason}`
     shapes rather than throwing on a rejected action.
 - **`rules/`** (`src/rules/index.ts`) — `RuleValidator` implements the
-  "separate validation prompt" approach: its own `LlamaChatSession` on a
-  dedicated `LlamaContextSequence` (sharing the loaded model/context with
-  the narrative session, but not its chat history), reset before every
+  "separate validation prompt" approach: given an `LlmDriver` (not
+  `node-llama-cpp` directly — see the pluggable Model backend note above),
+  it opens its own `ChatDriverSession` (a dedicated `LlamaContextSequence`
+  under the hood for the local backend, sharing the loaded model/context
+  with the narrative session but not its chat history; an independent
+  message array under the hood for the API backend), reset before every
   call so each validation is stateless. The model's response is forced
   into a tri-state `{outcome: "valid" | "neutral" | "invalid", reason:
-  string}` via a grammar built from `llama.createGrammarForJsonSchema`
-  (GBNF `enum`) — `"valid"` succeeds as attempted, `"neutral"` is a fizzle
+  string}` via `ChatDriverSession.promptForJson` (GBNF grammar locally,
+  `response_format: json_schema`/`json_object` over an API) — `"valid"`
+  succeeds as attempted, `"neutral"` is a fizzle
   (attempted, but doesn't fully succeed given current state/conditions —
   not a rejection), `"invalid"` doesn't happen at all. The state passed to
   the model includes each character's `activeDebuffs` and current node's
@@ -653,9 +682,9 @@ design above for beta scope.
   plausibility strictly against `state`, never against what the
   description itself asserts.
 - **`audit/`** (`src/audit/index.ts`) — `NarrationAuditor` implements the
-  same "separate validation prompt" pattern as `rules/`: its own
-  `LlamaChatSession` on a dedicated `LlamaContextSequence`, chat history
-  reset every call. Given a turn's narration text and the exact tool calls
+  same "separate validation prompt" pattern as `rules/`: given an
+  `LlmDriver`, its own `ChatDriverSession`, history reset every call. Given
+  a turn's narration text and the exact tool calls
   (with results) made that turn, it decides `{consistent: boolean,
   contradiction?: string}` — a grammar-forced fact-check of whether the
   narration accurately reflects what actually happened (success vs.
@@ -665,16 +694,28 @@ design above for beta scope.
   reasoning that produced the narration shouldn't also be the reasoning
   that grades it. See `ai/` below for how its verdict drives
   retry-then-fallback.
-- **`ai/`** (`src/ai/index.ts`) — `createAiSession(...)` loads the model,
-  opens one `LlamaContext`, and draws three sequences from it: one for the
-  narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`, one for
-  `audit/`'s `NarrationAuditor` (below). Declares the three check tools,
-  `say`, `note_hazard`, and the unified `action` tool via
-  `defineChatSessionFunction` (the `action` tool's params use a GBNF
-  `oneOf`/`const` schema to express the `move`/`use_technique`/`interact`
-  discriminated union) and drives the agentic loop through
-  `session.prompt(input, {functions})` (see the Turn Flow beta deviation
-  above re: the uncapped loop). The `action` handler funnels every call
+- **`ai/`** (`src/ai/index.ts`) — `createAiSession(options)` takes a
+  `BackendConfig` (`{type: "llamaCpp", modelPath}` or `{type: "api",
+  baseURL, apiKey, model}`) and builds the matching `LlmDriver` — see the
+  pluggable Model backend note above. For the local backend this opens one
+  `LlamaContext` and draws three sequences from it; for the API backend
+  each session is just an independent in-memory message array — either
+  way, one `ChatDriverSession` backs the narrative loop, one backs
+  `rules/`'s `RuleValidator`, one backs `audit/`'s `NarrationAuditor`
+  (`RuleValidator`/`NarrationAuditor` each call `driver.createChatSession`
+  themselves with their own fixed system prompt, so `ai/` never needs to
+  know their prompts). Declares the three check tools, `say`,
+  `note_hazard`, and the unified `action` tool as a `ToolDef[]` array
+  (`{name, description, parameters, handler}` — the `action` tool's
+  `parameters` use a JSON Schema `oneOf`/`const` shape to express the
+  `move`/`use_technique`/`interact` discriminated union; the local backend
+  compiles this into a GBNF grammar via `defineChatSessionFunction`, the
+  API backend passes it straight through as an OpenAI-style tool schema)
+  and drives the agentic loop through `session.prompt(input, tools)` (see
+  the Turn Flow beta deviation above re: the uncapped loop — bounded for
+  the API backend only, at `apiDriver.ts`'s `maxToolRounds`, since that
+  loop is now reimplemented by hand rather than owned internally by
+  `node-llama-cpp`). The `action` handler funnels every call
   through `checkAction` → `rules/`'s `RuleValidator.validate` →
   `applyAction`/`rejectAction`, short-circuiting to `rejectAction` on the
   first rejection from either stage. Each tool handler is wrapped by a
@@ -687,7 +728,7 @@ design above for beta scope.
   included an `action` call, `prompt()` runs `audit/`'s `NarrationAuditor`
   against the narration and `turnToolCalls`. On `{consistent: false}`, it
   reprompts the *same* narrative session with the contradiction named,
-  deliberately **without** `{functions}` — so the retry can only regenerate
+  deliberately **without** `tools` — so the retry can only regenerate
   text, never re-trigger tool calls and re-apply state a second time — up
   to `MAX_NARRATION_RETRIES` (2) times. If still inconsistent, it falls
   back to `buildFallbackNarration`: a deterministic, model-free sentence
@@ -697,10 +738,10 @@ design above for beta scope.
   *confirmed* to contradict what actually happened, at the cost of losing
   narrative flourish for that turn. Every turn (checked or not) appends a
   `turn.audited` dtm event — `{narration, toolCalls, checked, consistent,
-  retries, usedFallback}` — persisting the full narration text, since
-  `LlamaChatSession`'s chat history is in-memory only and would otherwise
-  be lost once the session ends; this is the first durable record of what
-  the AI actually said, not just what it did.
+  retries, usedFallback}` — persisting the full narration text, since a
+  `ChatDriverSession`'s history (whichever backend holds it) is in-memory
+  only and would otherwise be lost once the session ends; this is the
+  first durable record of what the AI actually said, not just what it did.
   This addresses the "narration can drift from actual state" gap: state
   itself was already guaranteed correct (only `tools/` can write `dtm`),
   but until this, nothing checked whether the *prose describing it* was

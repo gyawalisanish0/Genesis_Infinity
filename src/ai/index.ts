@@ -1,10 +1,3 @@
-import { readFileSync } from "node:fs";
-import {
-  getLlama,
-  defineChatSessionFunction,
-  LlamaChatSession,
-  type ChatSessionModelFunctions,
-} from "node-llama-cpp";
 import type { Action, ActionResult, RejectionResult, ToolContext } from "../tools/index.js";
 import {
   getScopeTool,
@@ -19,6 +12,25 @@ import {
 import { RuleValidator } from "../rules/index.js";
 import { NarrationAuditor } from "../audit/index.js";
 import { getState } from "../state/index.js";
+import type { LlmDriver, ToolDef } from "./llmDriver.js";
+import { createLlamaCppDriver, type LlamaCppBackendConfig } from "./llamaCppDriver.js";
+import { createApiDriver, type ApiBackendConfig } from "./apiDriver.js";
+
+/**
+ * Which LlmDriver backs a session: a local node-llama-cpp model, or any
+ * OpenAI-compatible chat completions API (Hugging Face Inference
+ * Providers, OpenRouter, etc. - see apiDriver.ts).
+ */
+export type BackendConfig = ({ type: "llamaCpp" } & LlamaCppBackendConfig) | ({ type: "api" } & ApiBackendConfig);
+
+async function createDriver(backend: BackendConfig): Promise<LlmDriver> {
+  switch (backend.type) {
+    case "llamaCpp":
+      return createLlamaCppDriver(backend);
+    case "api":
+      return createApiDriver(backend);
+  }
+}
 
 /**
  * Small models occasionally emit the literal string "null"/"undefined"/
@@ -32,43 +44,6 @@ const NULLISH_STRINGS = new Set(["null", "undefined", "none"]);
 function normalizeOptionalId(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   return NULLISH_STRINGS.has(value.trim().toLowerCase()) ? undefined : value;
-}
-
-/**
- * Detects the container's actual CPU quota from cgroup limits, if any.
- * /proc/cpuinfo (and thus node-llama-cpp's own core auto-detection) reports
- * the host machine's full physical core count even inside a quota-limited
- * container — observed directly on a Hugging Face CPU Space that reports 16
- * cores but is only entitled to 2 cores' worth of CPU time. Letting
- * node-llama-cpp size its thread pool off the wrong number causes
- * oversubscription and CFS-scheduler throttling stalls rather than a real
- * speedup. Returns undefined (no override, current auto-detect behavior
- * unchanged) when there's no cgroup limit or this isn't a cgroup-managed
- * environment at all — e.g. this repo's own dev sandbox, which reports an
- * unlimited quota (-1) and should keep using all its actual cores.
- */
-function detectCpuQuota(): number | undefined {
-  try {
-    const [quota, period] = readFileSync("/sys/fs/cgroup/cpu.max", "utf-8").trim().split(" ");
-    if (quota !== "max") {
-      return Math.max(1, Math.floor(Number(quota) / Number(period)));
-    }
-    return undefined;
-  } catch {
-    // not cgroup v2, or no limit file present - fall through to cgroup v1
-  }
-
-  try {
-    const quota = Number(readFileSync("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", "utf-8").trim());
-    const period = Number(readFileSync("/sys/fs/cgroup/cpu/cpu.cfs_period_us", "utf-8").trim());
-    if (quota > 0 && period > 0) {
-      return Math.max(1, Math.floor(quota / period));
-    }
-  } catch {
-    // no cgroup CPU controller available at all
-  }
-
-  return undefined;
 }
 
 function describeAction(action: Action): string {
@@ -141,7 +116,7 @@ export function buildFallbackNarration(actionCalls: ToolCallRecord[]): string {
 }
 
 export interface AiSessionOptions {
-  modelPath: string;
+  backend: BackendConfig;
   toolCtx: ToolContext;
   systemPrompt: string;
   /** Called after each tool call resolves — used by io/'s debug-dump mode. */
@@ -155,41 +130,19 @@ export interface AiSession {
 }
 
 /**
- * Loads the model, opens one context shared by the narrative session,
- * rules/'s validation session, and audit/'s narration-consistency session
- * (separate sequences, so none shares chat history with the others), and
- * wires up the beta tool set. Tier 1 per docs/ARCHITECTURE.md's AI
- * Orchestration: one model handles narrative, tool-call decisions, rule
- * validation, and narration auditing in sequence.
+ * Starts the driver (local node-llama-cpp or a remote API - see
+ * BackendConfig), opens independent chat sessions for the narrative
+ * session, rules/'s validation session, and audit/'s narration-consistency
+ * session (none shares history with the others), and wires up the beta
+ * tool set. Tier 1 per docs/ARCHITECTURE.md's AI Orchestration: one model
+ * handles narrative, tool-call decisions, rule validation, and narration
+ * auditing in sequence.
  */
 export async function createAiSession(options: AiSessionOptions): Promise<AiSession> {
-  const cpuQuota = detectCpuQuota();
-  console.log(
-    cpuQuota !== undefined
-      ? `[cpu-quota] cgroup CPU quota detected: ${cpuQuota} core(s) — passing as maxThreads`
-      : "[cpu-quota] no cgroup CPU quota found — using node-llama-cpp's default auto-detected thread count",
-  );
-  const llama = await getLlama({ maxThreads: cpuQuota });
-  console.log(`[cpu-quota] llama.maxThreads resolved to: ${llama.maxThreads}`);
-  const model = await llama.loadModel({ modelPath: options.modelPath });
-  // Bounded explicitly: "auto" would try to size up to the model's full
-  // trained context (often 128K+ tokens), and with no `sequences` count the
-  // context defaults to 1 slot even though 3 independent sequences are
-  // opened below — either gap alone can exhaust available RAM. 4096 turned
-  // out too tight in practice — observed a real "context shift strategy did
-  // not return a history that fits" crash on a single turn, since the
-  // system prompt, the action tool's full 3-variant schema, and large
-  // tool-result JSON payloads (further multiplied by this model's frequent
-  // malformed-call retries) can exceed it before any real history
-  // accumulates. 8192 costs ~1.4GB more KV cache across 3 sequences —
-  // comfortably inside a 16GB container.
-  const context = await model.createContext({ contextSize: 8192, sequences: 3 });
+  const driver = await createDriver(options.backend);
 
-  const narrativeSequence = context.getSequence();
-  const rulesSequence = context.getSequence();
-  const auditSequence = context.getSequence();
-  const ruleValidator = new RuleValidator(llama, rulesSequence);
-  const narrationAuditor = new NarrationAuditor(llama, auditSequence);
+  const ruleValidator = new RuleValidator(driver);
+  const narrationAuditor = new NarrationAuditor(driver);
 
   const turn = { timestamp: 0 };
   let turnToolCalls: ToolCallRecord[] = [];
@@ -200,44 +153,54 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
     return result;
   }
 
-  const functions: ChatSessionModelFunctions = {
-    get_scope: defineChatSessionFunction({
+  const tools: ToolDef[] = [
+    {
+      name: "get_scope",
       description:
         "Get the current scope for a character: their location, its environment, " +
         "connections to other nodes, their current effective stats and inventory " +
         "(quantities remaining, what's equipped), and who else is present.",
-      params: {
+      parameters: {
         type: "object",
         properties: { characterId: { type: "string" } },
       },
       handler: (params) =>
-        record("get_scope", params, getScopeTool(options.toolCtx, params, turn.timestamp)),
-    }),
-    get_character_sheet: defineChatSessionFunction({
-      description:
-        "Get a character's static sheet: identity, abilities, skills, and known techniques.",
-      params: {
+        record(
+          "get_scope",
+          params,
+          getScopeTool(options.toolCtx, params as { characterId: string }, turn.timestamp),
+        ),
+    },
+    {
+      name: "get_character_sheet",
+      description: "Get a character's static sheet: identity, abilities, skills, and known techniques.",
+      parameters: {
         type: "object",
         properties: { characterId: { type: "string" } },
       },
       handler: (params) =>
-        record("get_character_sheet", params, getCharacterSheetTool(options.toolCtx, params)),
-    }),
-    get_recent_dtm: defineChatSessionFunction({
+        record(
+          "get_character_sheet",
+          params,
+          getCharacterSheetTool(options.toolCtx, params as { characterId: string }),
+        ),
+    },
+    {
+      name: "get_recent_dtm",
       description: "Get the most recent events from this Experience's history log.",
-      params: {
+      parameters: {
         type: "object",
         properties: { limit: { type: "number" } },
       },
-      handler: (params) =>
-        record("get_recent_dtm", params, getRecentDtmTool(options.toolCtx, params)),
-    }),
-    say: defineChatSessionFunction({
+      handler: (params) => record("get_recent_dtm", params, getRecentDtmTool(options.toolCtx, params as { limit: number })),
+    },
+    {
+      name: "say",
       description:
         "Have a character say something out loud — dialogue, taunts, questions, " +
         "declarations. Always permitted and recorded in history; unlike `action`, " +
         "this has no capability or legality gate.",
-      params: {
+      parameters: {
         type: "object",
         properties: {
           characterId: { type: "string" },
@@ -249,9 +212,14 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         },
       },
       handler: (params) =>
-        record("say", params, sayTool(options.toolCtx, params, turn.timestamp)),
-    }),
-    note_hazard: defineChatSessionFunction({
+        record(
+          "say",
+          params,
+          sayTool(options.toolCtx, params as { characterId: string; message: string; targetId?: string }, turn.timestamp),
+        ),
+    },
+    {
+      name: "note_hazard",
       description:
         "Log a one-off note to history about a notable environmental detail or " +
         "hazard — use this once, the first time you notice something worth " +
@@ -260,7 +228,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         "with a resolvable effectId) — those apply automatically with no tool " +
         "call needed. This is only for flavor/unresolved hazards worth a " +
         "permanent note.",
-      params: {
+      parameters: {
         type: "object",
         properties: {
           characterId: { type: "string" },
@@ -268,9 +236,14 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         },
       },
       handler: (params) =>
-        record("note_hazard", params, noteHazardTool(options.toolCtx, params, turn.timestamp)),
-    }),
-    action: defineChatSessionFunction({
+        record(
+          "note_hazard",
+          params,
+          noteHazardTool(options.toolCtx, params as { characterId: string; description: string }, turn.timestamp),
+        ),
+    },
+    {
+      name: "action",
       description:
         "Commit to an action that changes the world: move a character to a " +
         "connected node, have a character attempt a technique, or have a " +
@@ -284,7 +257,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         "> 0 (check get_character_sheet for what they're carrying) — using a " +
         "consumable item consumes one and applies its effect; using an equipment " +
         "item toggles it equipped/unequipped.",
-      params: {
+      parameters: {
         oneOf: [
           {
             type: "object",
@@ -329,7 +302,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         ],
       },
       handler: async (params) => {
-        const action: Action = { ...params, timestamp: turn.timestamp };
+        const action: Action = { ...(params as object), timestamp: turn.timestamp } as Action;
         if ("targetId" in action) {
           action.targetId = normalizeOptionalId(action.targetId);
         }
@@ -373,20 +346,17 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
         return record("action", params, applyAction(options.toolCtx, action, validation.outcome));
       },
-    }),
-  };
+    },
+  ];
 
-  const session = new LlamaChatSession({
-    contextSequence: narrativeSequence,
-    systemPrompt: options.systemPrompt,
-  });
+  const session = driver.createChatSession(options.systemPrompt);
 
   return {
     async prompt(input, turnTimestamp) {
       turn.timestamp = turnTimestamp;
       turnToolCalls = [];
 
-      let narration = await session.prompt(input, { functions });
+      let narration = await session.prompt(input, tools);
 
       const actionCalls = turnToolCalls.filter((call) => call.name === "action");
       let auditResult = { consistent: true } as Awaited<ReturnType<NarrationAuditor["audit"]>>;
@@ -404,7 +374,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
             `The actual tool results this turn: ${JSON.stringify(turnToolCalls)}`,
             "Rewrite your narration to accurately reflect this.",
           ].join("\n");
-          // No `functions` here — this must not re-trigger tool calls and
+          // No `tools` here — this must not re-trigger tool calls and
           // re-apply state a second time, only regenerate the description.
           narration = await session.prompt(correction);
           auditResult = await narrationAuditor.audit(narration, turnToolCalls);
@@ -432,9 +402,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       return narration;
     },
     async dispose() {
-      session.dispose();
-      await context.dispose();
-      await model.dispose();
+      await driver.dispose();
     },
   };
 }

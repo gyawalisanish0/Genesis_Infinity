@@ -1,13 +1,14 @@
 import { loadExperience, type LoadedExperience } from "../data/loaders/experience.js";
 import { Dtm } from "../dtm/index.js";
-import { createAiSession, type ToolCallRecord } from "../ai/index.js";
+import { createAiSession, type BackendConfig, type ToolCallRecord } from "../ai/index.js";
 import type { ToolContext } from "../tools/index.js";
 import { createTimeline } from "../timeline/index.js";
 
 export interface EngineOptions {
   experienceDir: string;
   dbPath: string;
-  modelPath: string;
+  /** Which LlmDriver backs the session - a local node-llama-cpp model or a remote OpenAI-compatible API (see ai/llmDriver.ts). */
+  backend: BackendConfig;
   /** Called after each tool call resolves — used by io/'s debug-dump mode. */
   onToolCall?: (call: ToolCallRecord) => void;
 }
@@ -63,7 +64,7 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
   const toolCtx: ToolContext = { dtm, world: loaded.world, loaded, timeline };
 
   const aiSession = await createAiSession({
-    modelPath: options.modelPath,
+    backend: options.backend,
     toolCtx,
     systemPrompt: buildSystemPrompt(loaded),
     onToolCall: options.onToolCall,

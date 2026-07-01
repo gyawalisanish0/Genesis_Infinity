@@ -1,9 +1,4 @@
-import {
-  LlamaChatSession,
-  type Llama,
-  type LlamaContextSequence,
-  type LlamaJsonSchemaGrammar,
-} from "node-llama-cpp";
+import type { ChatDriverSession, JsonSchema, LlmDriver } from "../ai/llmDriver.js";
 import type { StateSnapshot } from "../state/index.js";
 
 /** A proposed action tool call, as the AI committed to it this turn. */
@@ -26,13 +21,13 @@ export interface RuleValidation {
   reason: string;
 }
 
-const VALIDATION_SCHEMA = {
+const VALIDATION_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     outcome: { enum: ["valid", "neutral", "invalid"] },
     reason: { type: "string" },
   },
-} as const;
+};
 
 /**
  * Validates proposed actions by asking the same model a separate, isolated
@@ -40,16 +35,15 @@ const VALIDATION_SCHEMA = {
  * action is legal given the current state. Kept distinct from the
  * narrative session so rules validation never leaks into, or is biased by,
  * the ongoing narration (docs/ARCHITECTURE.md Turn Flow, step 5).
+ * Backend-agnostic: works against a local node-llama-cpp model or a remote
+ * API-backed model, since it only depends on LlmDriver (see ai/llmDriver.ts).
  */
 export class RuleValidator {
-  private readonly session: LlamaChatSession;
-  private readonly grammarPromise: Promise<LlamaJsonSchemaGrammar<typeof VALIDATION_SCHEMA>>;
+  private readonly session: ChatDriverSession;
 
-  constructor(llama: Llama, sequence: LlamaContextSequence) {
-    this.session = new LlamaChatSession({
-      contextSequence: sequence,
-      systemPrompt:
-        "You are the rules referee for a turn-based RPG engine. You are " +
+  constructor(driver: LlmDriver) {
+    this.session = driver.createChatSession(
+      "You are the rules referee for a turn-based RPG engine. You are " +
         "given the full current game state — every character's sheet " +
         "(abilities, skills, known techniques), current position, and any " +
         "active debuffs — plus a proposed action from one character. " +
@@ -84,13 +78,11 @@ export class RuleValidator {
         "- Acting from a node the character isn't at, or targeting a " +
         "character who isn't present: invalid.\n" +
         "Respond only with the validation result.",
-    });
-    this.grammarPromise = llama.createGrammarForJsonSchema(VALIDATION_SCHEMA);
+    );
   }
 
   async validate(action: ProposedAction, state: StateSnapshot): Promise<RuleValidation> {
-    this.session.resetChatHistory();
-    const grammar = await this.grammarPromise;
+    this.session.resetHistory();
 
     const prompt = [
       `Current state: ${JSON.stringify(state)}`,
@@ -98,7 +90,6 @@ export class RuleValidator {
       "Is this action valid, neutral, or invalid given the current state?",
     ].join("\n");
 
-    const response = await this.session.prompt(prompt, { grammar });
-    return grammar.parse(response);
+    return this.session.promptForJson<RuleValidation>(prompt, VALIDATION_SCHEMA);
   }
 }
