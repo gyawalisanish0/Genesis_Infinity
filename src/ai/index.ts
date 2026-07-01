@@ -113,7 +113,11 @@ export interface AiSession {
 export async function createAiSession(options: AiSessionOptions): Promise<AiSession> {
   const llama = await getLlama();
   const model = await llama.loadModel({ modelPath: options.modelPath });
-  const context = await model.createContext();
+  // Bounded explicitly: "auto" would try to size up to the model's full
+  // trained context (often 128K+ tokens), and with no `sequences` count the
+  // context defaults to 1 slot even though 3 independent sequences are
+  // opened below — either gap alone can exhaust available RAM.
+  const context = await model.createContext({ contextSize: 4096, sequences: 3 });
 
   const narrativeSequence = context.getSequence();
   const rulesSequence = context.getSequence();
