@@ -124,26 +124,32 @@ nodes** (the actual visitable locations). Schema defined in
 
 An Experience can declare its own ability/skill/effect *definitions* (id +
 name, and for skills, an optional `governingAbilityId`; for effects, a
-`severity` and stat deltas — see **Escalation Effects** below) — this is the
+`severity` and stat deltas — see **Escalation Effects** below), plus
+**escalation tuning** (see **Escalation Config** below) — this is the
 ruleset template a character's abilities/skills draw their ids from, and the
-pool `tools/`'s escalation system draws debuffs from, distinct from a
-character's own stored scores/values.
+pool/parameters `tools/`'s escalation system draws debuffs from, distinct
+from a character's own stored scores/values.
 
 - Schema: `ExperienceSchema` in `src/data/schemas/experience.ts` (Zod),
-  currently scoped to `abilities`/`skills`/`effects` declarations — the full
-  Experience model (world, characters, rulesets, mode) is deferred.
-- Resolution is **per-entry fallback**, in `src/data/loaders/character.ts`:
-  each declared ability/skill/effect entry is validated individually; an
-  invalid or duplicate-id entry is dropped rather than failing the whole
-  list. Any default id (`DEFAULT_ABILITIES` / `DEFAULT_SKILLS` /
-  `DEFAULT_EFFECTS`) missing from the resolved set is filled in from the
-  default. A skill entry whose `governingAbilityId` doesn't match any
-  resolved ability id is also treated as broken and dropped (effects have
-  no such cross-reference to check).
+  currently scoped to `abilities`/`skills`/`effects`/`escalation`
+  declarations — the full Experience model (world, characters, rulesets,
+  mode) is deferred.
+- Ability/skill/effect resolution is **per-entry fallback**, in
+  `src/data/loaders/character.ts`: each declared entry is validated
+  individually; an invalid or duplicate-id entry is dropped rather than
+  failing the whole list. Any default id (`DEFAULT_ABILITIES` /
+  `DEFAULT_SKILLS` / `DEFAULT_EFFECTS`) missing from the resolved set is
+  filled in from the default. A skill entry whose `governingAbilityId`
+  doesn't match any resolved ability id is also treated as broken and
+  dropped (effects have no such cross-reference to check).
+- Escalation config resolution is **per-field fallback** instead (it's a
+  flat settings object, not an id-keyed list) — see Escalation Config
+  below.
 - This keeps the ruleset truly data-driven (an Experience can fully
-  override or extend the D&D baseline, and the default effect pool) while
-  guaranteeing a usable, internally-consistent result even if part of the
-  declared data is malformed.
+  override or extend the D&D baseline, the default effect pool, and the
+  default escalation tuning) while guaranteeing a usable,
+  internally-consistent result even if part of the declared data is
+  malformed or absent.
 
 ##### Escalation Effects
 
@@ -155,6 +161,19 @@ same scale as `EnvironmentalCode`), armorClassDelta?, maxHitPointsDelta?}`.
 descriptive — it gates which effects `tools/`'s `rejectAction` is allowed to
 draw from as a character's strike count rises (see Beta Implementation
 below).
+
+##### Escalation Config
+
+`EscalationConfigSchema` (`src/data/schemas/experience.ts`) tunes
+`rejectAction` itself: `{strikeThreshold?, maxSeverity?, debuffDurationTurns?}`,
+all optional. Each field falls back independently to
+`DEFAULT_ESCALATION_CONFIG` (`{strikeThreshold: 3, maxSeverity: 5,
+debuffDurationTurns: 5}`) if the Experience doesn't declare it — declaring
+only one field (e.g. a stricter `maxSeverity` cap) doesn't require
+redeclaring the others. Resolved once per load into
+`LoadedExperience.escalation` (a sibling of `ruleset`, since it's tuning
+parameters rather than declarable ruleset content) by
+`data/loaders/experience.ts`'s `resolveEscalationConfig`.
 
 ### Narrative / Plot Points
 
@@ -441,22 +460,25 @@ design above for beta scope.
       `rules/`'s tri-state judgment below).
     - `rejectAction(ctx, characterId, actionType, reason, turn)` — the
       escalation path, called whenever `checkAction` fails or `rules/`
-      judges an action `"invalid"`. Appends an `action.rejected` dtm
-      event, then counts that character's total rejections; once the
-      count reaches `STRIKE_THRESHOLD` (3), this and every further
-      rejection also appends a `debuff.applied` event, expiring
-      `DEBUFF_DURATION_TURNS` (5) turns later. The specific effect is
+      judges an action `"invalid"`. Reads its tuning from
+      `ctx.loaded.escalation` (see Escalation Config above) rather than
+      hardcoded constants. Appends an `action.rejected` dtm event, then
+      counts that character's total rejections; once the count reaches
+      `escalation.strikeThreshold`, this and every further rejection also
+      appends a `debuff.applied` event, expiring
+      `escalation.debuffDurationTurns` turns later. The specific effect is
       drawn at random from `ctx.loaded.ruleset.effects` (the Experience's
       resolved effect pool — see Escalation Effects above), but only from
       effects whose `severity` is at or below an eligible ceiling that
       rises by 1 with each strike past the threshold (capped at
-      `MAX_SEVERITY`, 5): strike 3 can only draw severity 1, strike 4
-      severity ≤2, and so on — `pickEffect` falls back to the pool's
-      lowest-severity entries if none qualify (e.g. a custom pool with no
-      severity-1 entries), so escalation never has zero eligible effects.
-      This is deterministic bookkeeping, not a model judgment call — it
-      fires the same way whether the rejection came from the hard
-      capability gate or `rules/`'s situational judgment.
+      `escalation.maxSeverity`): strike 3 can only draw severity 1 (with
+      the defaults), strike 4 severity ≤2, and so on — `pickEffect` falls
+      back to the pool's lowest-severity entries if none qualify (e.g. a
+      custom pool with no severity-1 entries), so escalation never has
+      zero eligible effects. This is deterministic bookkeeping, not a
+      model judgment call — it fires the same way whether the rejection
+      came from the hard capability gate or `rules/`'s situational
+      judgment.
     Both `applyAction`/`rejectAction` return `{success: false, reason}`
     shapes rather than throwing on a rejected action.
 - **`rules/`** (`src/rules/index.ts`) — `RuleValidator` implements the
@@ -542,7 +564,10 @@ and `getState`'s `activeDebuffs` correctly drops each debuff once its
 fallback: a custom Experience-declared effect list can override a default
 id (e.g. redefine `exposed`), add new higher-severity effects, and still
 falls back to any default id it didn't touch (e.g. `weakened`,
-`battered`).
+`battered`). Also verified `resolveEscalationConfig`'s per-field fallback:
+an Experience declaring only `strikeThreshold: 1` escalates on the very
+first rejection while `maxSeverity`/`debuffDurationTurns` still resolve
+from `DEFAULT_ESCALATION_CONFIG`.
 
 ---
 
@@ -589,8 +614,3 @@ falls back to any default id it didn't touch (e.g. `weakened`,
   describe using an item, but `CharacterSheet` has no concept of carried
   items, so nothing structurally grounds "does this character actually
   have that item."
-- **Escalation constants are still hardcoded** — the effect pool itself is
-  now Experience-authorable (`EffectDefSchema`/`DEFAULT_EFFECTS`, see
-  Escalation Effects above), but `STRIKE_THRESHOLD` (3), `MAX_SEVERITY`
-  (5), and `DEBUFF_DURATION_TURNS` (5) are still engine constants in
-  `tools/index.ts`, not per-Experience data.

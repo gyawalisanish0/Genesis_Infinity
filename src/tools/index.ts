@@ -8,13 +8,6 @@ import { getScope, findNode, type Scope } from "../scope/index.js";
 /** Outcome of an action, as decided by rules/ (see rules/index.ts). */
 export type ActionOutcome = "valid" | "neutral";
 
-/** Number of rejected actions a character can accrue before punishment starts. */
-const STRIKE_THRESHOLD = 3;
-/** How many turns a punishment debuff remains active once applied. */
-const DEBUFF_DURATION_TURNS = 5;
-/** Ceiling on how high the eligible severity can climb, regardless of strike count. */
-const MAX_SEVERITY = 5;
-
 /**
  * Everything a tool handler needs to read engine state. Bound once per
  * session (a single Experience/playthrough) by whoever wires these into
@@ -62,7 +55,7 @@ export interface RejectionResult {
   reason: string;
   /** Total rejected actions this character has accrued (including this one). */
   strikeCount: number;
-  /** Present once strikeCount reaches STRIKE_THRESHOLD — the punishment applied this time. */
+  /** Present once strikeCount reaches the Experience's escalation.strikeThreshold — the punishment applied this time. */
   debuffApplied?: AppliedDebuff;
 }
 
@@ -267,13 +260,14 @@ function pickEffect(effects: EffectDef[], ceiling: number): EffectDef {
 /**
  * Records a rejected action attempt — from checkAction's hard capability
  * gate, or rules/'s "invalid" judgment — and escalates: once a character
- * accrues STRIKE_THRESHOLD rejections, this and every further rejection
- * also applies a random effect drawn from the Experience's resolved effect
- * pool (`ctx.loaded.ruleset.effects`), expiring DEBUFF_DURATION_TURNS turns
- * later. The eligible severity ceiling rises by 1 with each strike past the
- * threshold (capped at MAX_SEVERITY), so punishment trends harsher the
- * longer it's ignored without being fully deterministic. This is
- * deterministic bookkeeping, not a model judgment call.
+ * accrues `ctx.loaded.escalation.strikeThreshold` rejections, this and every
+ * further rejection also applies a random effect drawn from the
+ * Experience's resolved effect pool (`ctx.loaded.ruleset.effects`),
+ * expiring `escalation.debuffDurationTurns` turns later. The eligible
+ * severity ceiling rises by 1 with each strike past the threshold (capped
+ * at `escalation.maxSeverity`), so punishment trends harsher the longer
+ * it's ignored without being fully deterministic. This is deterministic
+ * bookkeeping, not a model judgment call.
  */
 export function rejectAction(
   ctx: ToolContext,
@@ -282,6 +276,8 @@ export function rejectAction(
   reason: string,
   turnTimestamp: number,
 ): RejectionResult {
+  const { strikeThreshold, maxSeverity, debuffDurationTurns } = ctx.loaded.escalation;
+
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,
     timestamp: turnTimestamp,
@@ -294,16 +290,16 @@ export function rejectAction(
     .forEntity(ctx.loaded.experience.id, characterId)
     .filter((event) => event.type === "action.rejected").length;
 
-  if (strikeCount < STRIKE_THRESHOLD) {
+  if (strikeCount < strikeThreshold) {
     return { success: false, reason, strikeCount };
   }
 
-  const severityCeiling = Math.min(MAX_SEVERITY, strikeCount - STRIKE_THRESHOLD + 1);
+  const severityCeiling = Math.min(maxSeverity, strikeCount - strikeThreshold + 1);
   const template = pickEffect(ctx.loaded.ruleset.effects, severityCeiling);
   const debuffApplied: AppliedDebuff = {
     ...template,
     appliedAtTurn: turnTimestamp,
-    expiresAtTurn: turnTimestamp + DEBUFF_DURATION_TURNS,
+    expiresAtTurn: turnTimestamp + debuffDurationTurns,
   };
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,

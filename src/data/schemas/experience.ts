@@ -14,12 +14,33 @@ export const CharacterPlacementSchema = z.object({
 export type CharacterPlacement = z.infer<typeof CharacterPlacementSchema>;
 
 /**
+ * Tunables for tools/'s escalation system (rejectAction) — all optional,
+ * each falling back independently to DEFAULT_ESCALATION_CONFIG if not
+ * declared. `maxSeverity` shares EffectDefSchema's 1-5 severity scale.
+ */
+export const EscalationConfigSchema = z.object({
+  strikeThreshold: z.number().int().positive().optional(),
+  maxSeverity: z.number().int().min(1).max(5).optional(),
+  debuffDurationTurns: z.number().int().positive().optional(),
+});
+export type EscalationConfig = z.infer<typeof EscalationConfigSchema>;
+
+/** Engine defaults for any EscalationConfig field an Experience doesn't declare. */
+export const DEFAULT_ESCALATION_CONFIG: Required<EscalationConfig> = {
+  strikeThreshold: 3,
+  maxSeverity: 5,
+  debuffDurationTurns: 5,
+};
+
+/**
  * Minimal Experience schema, scoped for now to the ability/skill/effect
- * ruleset declaration and character starting placement — all optional, with
- * abilities/skills/effects falling back to the D&D-style defaults
- * (DEFAULT_ABILITIES / DEFAULT_SKILLS / DEFAULT_EFFECTS) via the resolver in
- * data/loaders/character.ts. The full Experience model (rulesets beyond
- * these, etc.) is deferred — see docs/ARCHITECTURE.md.
+ * ruleset declaration, escalation tuning, and character starting placement
+ * — all optional, with abilities/skills/effects falling back to the
+ * D&D-style defaults (DEFAULT_ABILITIES / DEFAULT_SKILLS / DEFAULT_EFFECTS)
+ * via the resolver in data/loaders/character.ts, and escalation falling
+ * back to DEFAULT_ESCALATION_CONFIG per-field in data/loaders/experience.ts.
+ * The full Experience model (rulesets beyond these, etc.) is deferred —
+ * see docs/ARCHITECTURE.md.
  */
 export const ExperienceSchema = z.object({
   id: z.string(),
@@ -27,6 +48,7 @@ export const ExperienceSchema = z.object({
   abilities: z.array(AbilityDefSchema).optional(),
   skills: z.array(SkillDefSchema).optional(),
   effects: z.array(EffectDefSchema).optional(),
+  escalation: EscalationConfigSchema.optional(),
   characters: z.array(CharacterPlacementSchema).optional(),
 });
 export type Experience = z.infer<typeof ExperienceSchema>;

@@ -1,6 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ExperienceSchema, type Experience } from "../schemas/experience.js";
+import {
+  ExperienceSchema,
+  DEFAULT_ESCALATION_CONFIG,
+  type Experience,
+  type EscalationConfig,
+} from "../schemas/experience.js";
 import { WorldSchema, type World } from "../schemas/world.js";
 import { CharacterSheetSchema, type CharacterSheet } from "../schemas/character.js";
 import { resolveRulesetDefs } from "./character.js";
@@ -9,8 +14,22 @@ import type { AbilityDef, SkillDef, EffectDef } from "../schemas/character.js";
 export interface LoadedExperience {
   experience: Experience;
   ruleset: { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[] };
+  escalation: Required<EscalationConfig>;
   world: World;
   characters: CharacterSheet[];
+}
+
+/**
+ * Resolves an Experience's declared escalation config against the engine
+ * defaults, per-field (not per-entry — this is a flat settings object, not
+ * an id-keyed definition list like abilities/skills/effects).
+ */
+function resolveEscalationConfig(declared: EscalationConfig | undefined): Required<EscalationConfig> {
+  return {
+    strikeThreshold: declared?.strikeThreshold ?? DEFAULT_ESCALATION_CONFIG.strikeThreshold,
+    maxSeverity: declared?.maxSeverity ?? DEFAULT_ESCALATION_CONFIG.maxSeverity,
+    debuffDurationTurns: declared?.debuffDurationTurns ?? DEFAULT_ESCALATION_CONFIG.debuffDurationTurns,
+  };
 }
 
 async function readJson(path: string): Promise<unknown> {
@@ -24,7 +43,8 @@ async function readJson(path: string): Promise<unknown> {
  *   <dir>/characters/*.json (CharacterSheetSchema, one per file)
  *
  * Ruleset abilities/skills/effects are resolved against the defaults via
- * resolveRulesetDefs (per-entry fallback) before being returned.
+ * resolveRulesetDefs (per-entry fallback), and escalation tuning against
+ * DEFAULT_ESCALATION_CONFIG (per-field fallback), before being returned.
  */
 export async function loadExperience(dir: string): Promise<LoadedExperience> {
   const experience = ExperienceSchema.parse(await readJson(join(dir, "experience.json")));
@@ -39,6 +59,7 @@ export async function loadExperience(dir: string): Promise<LoadedExperience> {
   );
 
   const ruleset = resolveRulesetDefs(experience);
+  const escalation = resolveEscalationConfig(experience.escalation);
 
-  return { experience, ruleset, world, characters };
+  return { experience, ruleset, escalation, world, characters };
 }
