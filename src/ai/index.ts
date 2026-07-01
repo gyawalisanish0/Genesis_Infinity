@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   getLlama,
   defineChatSessionFunction,
@@ -31,6 +32,43 @@ const NULLISH_STRINGS = new Set(["null", "undefined", "none"]);
 function normalizeOptionalId(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   return NULLISH_STRINGS.has(value.trim().toLowerCase()) ? undefined : value;
+}
+
+/**
+ * Detects the container's actual CPU quota from cgroup limits, if any.
+ * /proc/cpuinfo (and thus node-llama-cpp's own core auto-detection) reports
+ * the host machine's full physical core count even inside a quota-limited
+ * container — observed directly on a Hugging Face CPU Space that reports 16
+ * cores but is only entitled to 2 cores' worth of CPU time. Letting
+ * node-llama-cpp size its thread pool off the wrong number causes
+ * oversubscription and CFS-scheduler throttling stalls rather than a real
+ * speedup. Returns undefined (no override, current auto-detect behavior
+ * unchanged) when there's no cgroup limit or this isn't a cgroup-managed
+ * environment at all — e.g. this repo's own dev sandbox, which reports an
+ * unlimited quota (-1) and should keep using all its actual cores.
+ */
+function detectCpuQuota(): number | undefined {
+  try {
+    const [quota, period] = readFileSync("/sys/fs/cgroup/cpu.max", "utf-8").trim().split(" ");
+    if (quota !== "max") {
+      return Math.max(1, Math.floor(Number(quota) / Number(period)));
+    }
+    return undefined;
+  } catch {
+    // not cgroup v2, or no limit file present - fall through to cgroup v1
+  }
+
+  try {
+    const quota = Number(readFileSync("/sys/fs/cgroup/cpu/cpu.cfs_quota_us", "utf-8").trim());
+    const period = Number(readFileSync("/sys/fs/cgroup/cpu/cpu.cfs_period_us", "utf-8").trim());
+    if (quota > 0 && period > 0) {
+      return Math.max(1, Math.floor(quota / period));
+    }
+  } catch {
+    // no cgroup CPU controller available at all
+  }
+
+  return undefined;
 }
 
 function describeAction(action: Action): string {
@@ -125,7 +163,7 @@ export interface AiSession {
  * validation, and narration auditing in sequence.
  */
 export async function createAiSession(options: AiSessionOptions): Promise<AiSession> {
-  const llama = await getLlama();
+  const llama = await getLlama({ maxThreads: detectCpuQuota() });
   const model = await llama.loadModel({ modelPath: options.modelPath });
   // Bounded explicitly: "auto" would try to size up to the model's full
   // trained context (often 128K+ tokens), and with no `sequences` count the
