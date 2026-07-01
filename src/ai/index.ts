@@ -163,7 +163,14 @@ export interface AiSession {
  * validation, and narration auditing in sequence.
  */
 export async function createAiSession(options: AiSessionOptions): Promise<AiSession> {
-  const llama = await getLlama({ maxThreads: detectCpuQuota() });
+  const cpuQuota = detectCpuQuota();
+  console.log(
+    cpuQuota !== undefined
+      ? `[cpu-quota] cgroup CPU quota detected: ${cpuQuota} core(s) — passing as maxThreads`
+      : "[cpu-quota] no cgroup CPU quota found — using node-llama-cpp's default auto-detected thread count",
+  );
+  const llama = await getLlama({ maxThreads: cpuQuota });
+  console.log(`[cpu-quota] llama.maxThreads resolved to: ${llama.maxThreads}`);
   const model = await llama.loadModel({ modelPath: options.modelPath });
   // Bounded explicitly: "auto" would try to size up to the model's full
   // trained context (often 128K+ tokens), and with no `sequences` count the
