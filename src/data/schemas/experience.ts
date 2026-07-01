@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AbilityDefSchema, SkillDefSchema, EffectDefSchema } from "./character.js";
+import { AbilityDefSchema, SkillDefSchema, EffectDefSchema, ItemDefSchema } from "./character.js";
 
 /**
  * A character's starting placement in the world — the "location metadata"
@@ -36,14 +36,14 @@ export const DEFAULT_ESCALATION_CONFIG: Required<EscalationConfig> = {
 };
 
 /**
- * Minimal Experience schema, scoped for now to the ability/skill/effect
+ * Minimal Experience schema, scoped for now to the ability/skill/effect/item
  * ruleset declaration, escalation tuning, and character starting placement
- * — all optional, with abilities/skills/effects falling back to the
- * D&D-style defaults (DEFAULT_ABILITIES / DEFAULT_SKILLS / DEFAULT_EFFECTS)
- * via the resolver in data/loaders/character.ts, and escalation falling
- * back to DEFAULT_ESCALATION_CONFIG per-field in data/loaders/experience.ts.
- * The full Experience model (rulesets beyond these, etc.) is deferred —
- * see docs/ARCHITECTURE.md.
+ * — all optional, with abilities/skills/effects/items falling back to the
+ * defaults (DEFAULT_ABILITIES / DEFAULT_SKILLS / DEFAULT_EFFECTS /
+ * DEFAULT_ITEMS) via the resolver in data/loaders/character.ts, and
+ * escalation falling back to DEFAULT_ESCALATION_CONFIG per-field in
+ * data/loaders/experience.ts. The full Experience model (rulesets beyond
+ * these, etc.) is deferred — see docs/ARCHITECTURE.md.
  */
 export const ExperienceSchema = z.object({
   id: z.string(),
@@ -51,6 +51,7 @@ export const ExperienceSchema = z.object({
   abilities: z.array(AbilityDefSchema).optional(),
   skills: z.array(SkillDefSchema).optional(),
   effects: z.array(EffectDefSchema).optional(),
+  items: z.array(ItemDefSchema).optional(),
   escalation: EscalationConfigSchema.optional(),
   characters: z.array(CharacterPlacementSchema).optional(),
 });

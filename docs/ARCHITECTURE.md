@@ -118,15 +118,24 @@ nodes** (the actual visitable locations). Schema defined in
     `tools/`'s `use_technique` action: a character can only attempt a
     technique on their own list — checked structurally, before the attempt
     ever reaches `rules/` (see Beta Implementation below).
+  - **Inventory** — unlike techniques, items *are* Experience-wide (an
+    `ItemDefSchema` catalog, like abilities/skills/effects), since items
+    are usually generic — "Health Potion" means the same thing for every
+    character who carries one. A character's sheet just carries quantities
+    (`InventoryEntrySchema`: `{itemId, quantity, equipped?}`) referencing
+    that catalog. This is the hard capability gate for `interact`'s
+    optional `itemId`: a character can only use an item they actually
+    carry with `quantity > 0` — see Ruleset Declaration & Fallback below
+    and `tools/` in Beta Implementation.
   - **Class / race / background** — open strings, not fixed enums, so
     non-fantasy settings aren't forced into D&D-specific content.
   - **No derived-stat formulas** — ability scores, skill values, hit points,
     and armor class are all raw stored values. There's no D&D-style
     modifier/proficiency formula baked into the schema; if `rules/` needs a
     derived value, it computes one at resolution time.
-  - Validation: ability, skill, and technique IDs must each be unique within
-    a sheet, and a skill's `governingAbilityId` must reference a real
-    ability on that sheet.
+  - Validation: ability, skill, technique, and inventory item IDs must each
+    be unique within a sheet, and a skill's `governingAbilityId` must
+    reference a real ability on that sheet.
 
 #### Ruleset Declaration & Fallback
 
@@ -135,9 +144,10 @@ both falling back to engine defaults if absent:
 
 - **Definitions** — id-keyed lists a character's own data draws its ids
   from: ability/skill *definitions* (id + name, and for skills an optional
-  `governingAbilityId`), and effect *definitions* for escalation (id + name
-  + description + `severity` + stat deltas — see **Escalation Effects**
-  below).
+  `governingAbilityId`), effect *definitions* for escalation (id + name +
+  description + `severity` + stat deltas — see **Escalation Effects**
+  below), and item *definitions* for inventory (id + name + description +
+  `type` + effect fields — see **Item Catalog & Inventory** below).
 - **Escalation tuning** — flat settings for `tools/`'s escalation system
   itself (how many strikes before punishment, how harsh, how long it
   lasts) — see **Escalation Config** below.
@@ -146,25 +156,26 @@ Both are distinct from a character's own stored scores/values, which live
 on the `CharacterSheet` itself, not the Experience.
 
 - Schema: `ExperienceSchema` in `src/data/schemas/experience.ts` (Zod),
-  currently scoped to `abilities`/`skills`/`effects`/`escalation`
+  currently scoped to `abilities`/`skills`/`effects`/`items`/`escalation`
   declarations — the full Experience model (world, characters, rulesets,
   mode) is deferred.
-- Ability/skill/effect resolution is **per-entry fallback**, in
+- Ability/skill/effect/item resolution is **per-entry fallback**, in
   `src/data/loaders/character.ts`: each declared entry is validated
   individually; an invalid or duplicate-id entry is dropped rather than
   failing the whole list. Any default id (`DEFAULT_ABILITIES` /
-  `DEFAULT_SKILLS` / `DEFAULT_EFFECTS`) missing from the resolved set is
-  filled in from the default. A skill entry whose `governingAbilityId`
-  doesn't match any resolved ability id is also treated as broken and
-  dropped (effects have no such cross-reference to check).
+  `DEFAULT_SKILLS` / `DEFAULT_EFFECTS` / `DEFAULT_ITEMS`) missing from the
+  resolved set is filled in from the default. A skill entry whose
+  `governingAbilityId` doesn't match any resolved ability id is also
+  treated as broken and dropped (effects/items have no such
+  cross-reference to check).
 - Escalation config resolution is **per-field fallback** instead (it's a
   flat settings object, not an id-keyed list) — see Escalation Config
   below.
 - This keeps the ruleset truly data-driven (an Experience can fully
-  override or extend the D&D baseline, the default effect pool, and the
-  default escalation tuning) while guaranteeing a usable,
-  internally-consistent result even if part of the declared data is
-  malformed or absent.
+  override or extend the D&D baseline, the default effect pool, the
+  default item catalog, and the default escalation tuning) while
+  guaranteeing a usable, internally-consistent result even if part of the
+  declared data is malformed or absent.
 
 ##### Escalation Effects
 
@@ -176,6 +187,31 @@ same scale as `EnvironmentalCode`), armorClassDelta?, maxHitPointsDelta?}`.
 descriptive — it gates which effects `tools/`'s `rejectAction` is allowed to
 draw from as a character's strike count rises (see Beta Implementation
 below).
+
+##### Item Catalog & Inventory
+
+`ItemDefSchema` (`src/data/schemas/character.ts`) is the ruleset-level
+catalog entry: `{id, name, description, type: "consumable" | "equipment",
+armorClassDelta?, maxHitPointsDelta?, healAmount?}`. Deliberately a flat
+schema (not a discriminated union) for consistency with `EffectDefSchema`
+— fields are only meaningful for the `type` they document, by convention
+rather than schema-enforced separation:
+- `"consumable"` — `healAmount`, if set, is applied once, instantly, to
+  current HP when used, then the item's quantity is decremented. This is
+  permanent, unlike escalation debuffs/hazards — there's no decay/expiry
+  for a heal.
+- `"equipment"` — `armorClassDelta`/`maxHitPointsDelta` apply as a
+  standing modifier for as long as the item is equipped, toggled on each
+  use and removed the instant it's unequipped. Not time-based at all,
+  unlike escalation/hazard debuffs.
+
+`DEFAULT_ITEMS` provides two fallback entries: `health-potion`
+(consumable, `healAmount: 20`) and `iron-shield` (equipment,
+`armorClassDelta: 2`). A character's `CharacterSheet.inventory` is an
+array of `InventoryEntrySchema` (`{itemId, quantity, equipped?}`)
+referencing this catalog by id — see **Inventory** under Characters above,
+and `tools/`/`state/` in Beta Implementation for how quantity/equipped
+state is actually derived and applied.
 
 ##### Escalation Config
 
@@ -230,7 +266,7 @@ an event-sourcing pattern — DTM is the single source of truth.
   | `id` | INTEGER PK | autoincrement, ordering tiebreaker |
   | `experience_id` | TEXT | scopes events to a single Experience/playthrough |
   | `timestamp` | INTEGER | in-game/engine time, not wall clock |
-  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"`, `"hazard.noted"`, `"turn.audited"` |
+  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"`, `"hazard.noted"`, `"turn.audited"`, `"item.consumed"`, `"item.toggled"` |
   | `entity_id` | TEXT, nullable | character/NPC/item the event concerns, if any |
   | `node_id` | TEXT, nullable | node the event occurred at, if applicable |
   | `position_x` / `position_y` | INTEGER, nullable | for entity/item position-update events |
@@ -424,20 +460,28 @@ design above for beta scope.
   `activeDebuffs` — non-expired `AppliedDebuff`s (an `EffectDef` plus
   `appliedAtUnit`/`expiresAtUnit`, `timeline/` units — real-wall-clock-
   anchored, not turn count) derived from `debuff.applied` dtm events,
-  filtered by `expiresAtUnit > currentTimelineUnit` — `effectiveStats`,
-  `computeEffectiveStats`'s result: the sheet's
-  `armorClass`/`hitPoints` with `activeDebuffs`' deltas summed in (max HP
-  floored at 0, current HP clamped down if the effective max drops below
-  it) — and `environmentalCodes`, the current node's merged codes (via
-  `findNode`/`mergeEnvironmentalCodes`, both moved to
+  filtered by `expiresAtUnit > currentTimelineUnit` — `inventory`, the
+  sheet's starting `InventoryEntry`s with `quantity` decremented by each
+  `item.consumed` event and `equipped` flipped by each `item.toggled`
+  event (`currentInventory`, the same "sheet is static, state is derived"
+  pattern as position/debuffs) — `effectiveStats`, `computeEffectiveStats`'s
+  result: the sheet's `armorClass`/`hitPoints` with `activeDebuffs`' *and
+  currently-equipped items'* deltas summed in (max HP floored at 0,
+  current HP clamped to the effective max), plus any cumulative healing
+  from `item.consumed` events (`totalHealingReceived` — permanent, not a
+  decaying effect, snapshotting `healAmount` into the event payload at
+  consumption time so this doesn't need to re-look the item up in a
+  possibly-changed catalog) — and `environmentalCodes`, the current node's
+  merged codes (via `findNode`/`mergeEnvironmentalCodes`, both moved to
   `data/schemas/world.ts` so `state/` can call them without depending on
   `scope/`, which itself depends on `state/`'s types — importing them from
   `scope/` would have created a cycle). Confirms the "state is a derived
   view, never independently stored" principle above. The effect pool
-  itself lives in `loaded.ruleset.effects` (Experience-resolved, see
-  Ruleset Declaration & Fallback above) rather than as a `state/`-owned
-  constant. Computing `effectiveStats` in `state/` rather than leaving
-  `rules/` to sum deltas out of `activeDebuffs` itself follows the same
+  itself lives in `loaded.ruleset.effects`, and the item catalog in
+  `loaded.ruleset.items` (both Experience-resolved, see Ruleset
+  Declaration & Fallback above) rather than as `state/`-owned constants.
+  Computing `effectiveStats` in `state/` rather than leaving `rules/` to
+  sum deltas out of `activeDebuffs`/`inventory` itself follows the same
   principle as `scope/`'s computed direction below: a fact the engine
   hands the AI, not something left for it to derive. `environmentalCodes`
   is included so `rules/`'s tri-state judgment can factor hazards into
@@ -449,10 +493,12 @@ design above for beta scope.
   returns a character's current node (environmental codes now read
   directly from `state/`'s already-computed `CharacterState.environmentalCodes`
   rather than recomputing the merge, and connections with **computed**
-  direction), their `effectiveStats` (see `state/` above — this is how the
-  AI actually sees debuff-adjusted stats, via `get_scope`), plus which other
-  characters are co-located (`othersPresent`). Direction is an 8-point
-  compass computed from same-region local-position deltas, or
+  direction), their `effectiveStats` and current `inventory` (see `state/`
+  above — this is how the AI actually sees debuff/equipment-adjusted
+  stats and current item quantities/equipped state via `get_scope`,
+  distinct from `get_character_sheet`'s static starting inventory), plus
+  which other characters are co-located (`othersPresent`). Direction is an
+  8-point compass computed from same-region local-position deltas, or
   region-position deltas when comparing nodes across regions (local
   sub-grids are unbounded and not comparable cross-region); two nodes at
   the same position on different layers resolve to `"up"`/`"down"`. An
@@ -503,11 +549,15 @@ design above for beta scope.
       immediately with a reason (e.g. `"Son Goku" does not know a
       technique called "hakai"`) — an unknown technique never reaches
       `rules/` for a legality judgment, since knowing/not-knowing a
-      technique isn't a judgment call. For `interact`, this is much
-      thinner: if a `targetId` is given, the target must exist and be
-      co-located with the acting character (same node) — no capability
-      check is possible for free-form content, so this is the only
-      deterministic guardrail interact gets.
+      technique isn't a judgment call. For `interact`, this is thinner but
+      no longer single-gate: if a `targetId` is given, the target must
+      exist and be co-located with the acting character (same node); and
+      if an `itemId` is given, the character must actually carry that item
+      with `quantity > 0` in `state/`'s current inventory (an item on the
+      static sheet that's already been fully consumed no longer passes) —
+      no capability check is possible for the free-form `description`
+      itself, so these two structural checks are the only deterministic
+      guardrails interact gets.
     - `applyAction(ctx, action, outcome)` — runs only after both
       `checkAction` and `rules/` approve, and appends the resulting dtm
       event (`entity.moved` for `move`, `technique.used` with a
@@ -530,6 +580,21 @@ design above for beta scope.
       universal "toxic" or "cold" effect the engine could sensibly guess
       at for content the Experience didn't define. This is deterministic;
       no model call is involved in whether an effect applies.
+      `applyAction`'s `interact` case additionally calls `applyItemUse(ctx,
+      characterId, itemId, turn)` whenever the action carries an `itemId`
+      (skipped entirely for item-less interacts): for a `"consumable"`
+      item this appends an `item.consumed` event (`{itemId, healAmount}`)
+      — an instant, **permanent** effect via `state/`'s
+      `totalHealingReceived`, not a timeline-expiring debuff, since healing
+      isn't something that should wear off; for an `"equipment"` item it
+      appends an `item.toggled` event flipping `equipped` (reading the
+      current state first so it toggles rather than always equipping) — a
+      **standing** modifier for as long as `equipped` stays true, not
+      time-based at all, picked up by `computeEffectiveStats` alongside
+      debuffs' `armorClassDelta`/`maxHitPointsDelta`. Both are deliberately
+      separate mechanisms from the debuff/hazard timeline system rather
+      than forced into `EffectDef`'s shape, since neither "permanent" nor
+      "toggled by presence" fits an expiring-effect model.
     - `rejectAction(ctx, characterId, actionType, reason, turn)` — the
       escalation path, called whenever `checkAction` fails or `rules/`
       judges an action `"invalid"`. Reads its tuning from
@@ -745,7 +810,26 @@ environmental codes (not part of the checked-in fixture): one with an
 (confirmed via the resulting `effectiveStats` change), the other with an
 unmatched `effectId` produced no mechanical effect at all (the null
 fallback), and `note_hazard` successfully logged a `hazard.noted` event
-for the unresolved one. Also verified `ai/`'s `buildFallbackNarration`
+for the unresolved one. Also verified the item/inventory system: each
+character's sheet declares a starting `inventory` (Goku: two
+`health-potion`; Venom: one `iron-shield`, unequipped) resolved against
+`DEFAULT_ITEMS` via `resolveItemDefs`'s per-entry fallback (same pattern as
+effects/abilities/skills). Confirmed `checkInteract`'s item gate rejects an
+`itemId` the character doesn't carry (and rejects it again once a
+consumable's `quantity` hits 0 from prior uses) before any model call.
+Confirmed `applyItemUse`'s two behaviors end-to-end through `state/`'s
+`currentInventory`/`totalHealingReceived`: consuming a `health-potion`
+appends `item.consumed`, decrements quantity by one, and raises the
+character's effective `hitPoints.current` (verified with Goku's HP set to
+100/180 to avoid the max-HP clamp masking the math — two consecutive
+potions produced 100→120→140, and a third attempt after quantity reached 0
+was correctly rejected by the gate; a subsequent overheal case confirmed
+140+100 clamps to the sheet's `max: 180` rather than overshooting); toggling
+`iron-shield` appends `item.toggled` and immediately changes
+`effectiveStats.armorClass` by the item's `armorClassDelta` while equipped,
+reverting when toggled back off, with the base sheet's `armorClass`
+untouched throughout — mirroring how debuffs affect `effectiveStats` without
+touching the sheet. Also verified `ai/`'s `buildFallbackNarration`
 directly against real `applyAction`/`rejectAction` results for every
 action type and outcome (valid move, neutral technique, valid interact,
 a capability-gate rejection), confirming each produces an accurate,
@@ -754,21 +838,6 @@ persists the full expected shape. `audit/`'s `NarrationAuditor` itself —
 like `rules/`'s `RuleValidator` — has not been exercised against a real
 loaded model in this environment; only the deterministic code around it
 (what triggers the check, what happens on failure) is verified.
-
-### Beta Preparation
-
-Concrete next targets for the beta slice, called out ahead of the rest of
-Open/Deferred below since they're the planned next work rather than
-longer-tail backlog:
-
-- **Item/inventory schema** — `interact`'s free-form description can
-  already describe using an item, but `CharacterSheet` has no concept of
-  carried items, so nothing structurally grounds "does this character
-  actually have that item" the way `techniques` grounds `use_technique`.
-  Likely mirrors `TechniqueDefSchema`'s shape (per-character, no
-  ruleset-level template — an `items: ItemDefSchema[]` field), with
-  `checkAction`'s `interact` case gaining a similar, lighter capability
-  check when a described action names a specific carried item.
 
 ---
 

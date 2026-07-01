@@ -28,6 +28,8 @@ export interface Scope {
   character: CharacterState["sheet"];
   /** armorClass/hitPoints with active debuffs' deltas applied — see state/'s computeEffectiveStats. */
   effectiveStats: CharacterState["effectiveStats"];
+  /** Current inventory (quantity/equipped as derived from dtm) — see state/'s currentInventory. Distinct from `character.inventory`, the static starting list. */
+  inventory: CharacterState["inventory"];
   node: ScopedNode;
   othersPresent: ScopedCharacter[];
 }
@@ -70,8 +72,9 @@ function directionBetween(from: NodeLocation, to: NodeLocation): string {
 /**
  * Computes the AI-visible scope for a character this turn: their current
  * node (merged environmental codes, connections with computed direction),
- * their debuff-adjusted effective stats, and which other characters are
- * present at the same node.
+ * their debuff/equipment-adjusted effective stats, their current inventory
+ * (quantities/equipped state, not the static starting list), and which
+ * other characters are present at the same node.
  */
 export function getScope(world: World, state: StateSnapshot, characterId: string): Scope {
   const character = state.characters.find((c) => c.sheet.id === characterId);
@@ -97,6 +100,7 @@ export function getScope(world: World, state: StateSnapshot, characterId: string
   return {
     character: character.sheet,
     effectiveStats: character.effectiveStats,
+    inventory: character.inventory,
     node: {
       id: from.node.id,
       name: from.node.name,

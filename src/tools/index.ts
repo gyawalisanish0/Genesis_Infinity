@@ -39,6 +39,7 @@ export type Action =
       characterId: string;
       description: string;
       targetId?: string;
+      itemId?: string;
       timestamp: number;
     };
 
@@ -281,37 +282,99 @@ function applyUseTechnique(
 /**
  * Structural gate for interact: no hard capability check is possible for
  * free-form content, but if a target is named it must actually be present
- * — same node as the acting character. This is the only deterministic
- * guardrail on interact; everything else (does the attempt succeed) is
- * rules/'s tri-state judgment (see docs/ARCHITECTURE.md).
+ * — same node as the acting character — and if an item is named, the
+ * character must actually be carrying it (quantity > 0), the same hard
+ * capability gate `techniques` gives `use_technique`. These are the only
+ * deterministic guardrails on interact; everything else (does the attempt
+ * succeed) is rules/'s tri-state judgment (see docs/ARCHITECTURE.md).
  */
 function checkInteract(
   ctx: ToolContext,
   action: Extract<Action, { type: "interact" }>,
 ): ActionCheck {
-  if (!action.targetId) {
-    return { allowed: true };
-  }
-
   const state = getState(ctx.dtm, ctx.loaded, ctx.world, action.timestamp, ctx.timeline.currentUnit());
   const actor = state.characters.find((c) => c.sheet.id === action.characterId);
   if (!actor) {
     return { allowed: false, reason: `Character "${action.characterId}" not found` };
   }
 
-  const target = state.characters.find((c) => c.sheet.id === action.targetId);
-  if (!target) {
-    return { allowed: false, reason: `"${action.targetId}" not found` };
+  if (action.targetId) {
+    const target = state.characters.find((c) => c.sheet.id === action.targetId);
+    if (!target) {
+      return { allowed: false, reason: `"${action.targetId}" not found` };
+    }
+
+    if (target.nodeId !== actor.nodeId) {
+      return {
+        allowed: false,
+        reason: `"${target.sheet.name}" is not present at "${actor.nodeId}"`,
+      };
+    }
   }
 
-  if (target.nodeId !== actor.nodeId) {
-    return {
-      allowed: false,
-      reason: `"${target.sheet.name}" is not present at "${actor.nodeId}"`,
-    };
+  if (action.itemId) {
+    const entry = actor.inventory.find((item) => item.itemId === action.itemId);
+    if (!entry || entry.quantity <= 0) {
+      return {
+        allowed: false,
+        reason: `"${actor.sheet.name}" does not have "${action.itemId}"`,
+      };
+    }
   }
 
   return { allowed: true };
+}
+
+/**
+ * Applies the effect of using a carried item, once checkAction/rules/ have
+ * already approved the interact. Branches on the item's `type` (see
+ * ItemDefSchema in data/schemas/character.ts):
+ * - `"consumable"` — writes `item.consumed` with `{itemId, healAmount}`
+ *   (snapshotting healAmount so state/ doesn't need to re-look the item up
+ *   in a possibly-changed catalog later). state/'s `currentInventory`
+ *   decrements quantity from this event, and `totalHealingReceived` sums
+ *   `healAmount` into a permanent current-HP increase.
+ * - `"equipment"` — writes `item.toggled` flipping `equipped`, computed
+ *   from the *current* derived state (not the static sheet), so repeated
+ *   uses correctly alternate equip/unequip.
+ * Silently does nothing if the itemId doesn't resolve in the Experience's
+ * catalog — checkInteract's gate only verifies possession, not that the
+ * catalog still defines the item, so this is a defensive no-op rather than
+ * a crash.
+ */
+function applyItemUse(
+  ctx: ToolContext,
+  characterId: string,
+  itemId: string,
+  turnTimestamp: number,
+): void {
+  const item = ctx.loaded.ruleset.items.find((candidate) => candidate.id === itemId);
+  if (!item) {
+    return;
+  }
+
+  if (item.type === "consumable") {
+    ctx.dtm.append({
+      experienceId: ctx.loaded.experience.id,
+      timestamp: turnTimestamp,
+      type: "item.consumed",
+      entityId: characterId,
+      payload: { itemId, healAmount: item.healAmount },
+    });
+    return;
+  }
+
+  const state = getState(ctx.dtm, ctx.loaded, ctx.world, turnTimestamp, ctx.timeline.currentUnit());
+  const character = state.characters.find((c) => c.sheet.id === characterId);
+  const currentlyEquipped = character?.inventory.find((entry) => entry.itemId === itemId)?.equipped ?? false;
+
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: turnTimestamp,
+    type: "item.toggled",
+    entityId: characterId,
+    payload: { itemId, equipped: !currentlyEquipped },
+  });
 }
 
 function applyInteract(
@@ -324,8 +387,11 @@ function applyInteract(
     timestamp: action.timestamp,
     type: "character.interacted",
     entityId: action.characterId,
-    payload: { description: action.description, targetId: action.targetId, outcome },
+    payload: { description: action.description, targetId: action.targetId, itemId: action.itemId, outcome },
   });
+  if (action.itemId) {
+    applyItemUse(ctx, action.characterId, action.itemId, action.timestamp);
+  }
   return { success: true, outcome };
 }
 

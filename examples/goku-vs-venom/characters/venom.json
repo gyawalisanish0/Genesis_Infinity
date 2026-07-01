@@ -24,6 +24,9 @@
     { "id": "symbiote-tendrils", "name": "Symbiote Tendrils", "description": "Lashes out with whip-like extensions of the symbiote mass." },
     { "id": "venom-bite", "name": "Venom Bite", "description": "A vicious bite from the symbiote's fanged maw." }
   ],
+  "inventory": [
+    { "itemId": "iron-shield", "quantity": 1, "equipped": false }
+  ],
   "hitPoints": { "current": 160, "max": 160 },
   "armorClass": 16
 }

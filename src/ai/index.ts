@@ -31,7 +31,8 @@ function describeAction(action: Action): string {
     case "interact":
       return (
         `"${action.characterId}" attempts: ${action.description}` +
-        (action.targetId ? ` (targeting "${action.targetId}")` : "")
+        (action.targetId ? ` (targeting "${action.targetId}")` : "") +
+        (action.itemId ? ` (using "${action.itemId}")` : "")
       );
   }
 }
@@ -58,7 +59,12 @@ const MAX_NARRATION_RETRIES = 2;
 export function buildFallbackNarration(actionCalls: ToolCallRecord[]): string {
   return actionCalls
     .map((call) => {
-      const params = call.params as { type: string; characterId: string; description?: string };
+      const params = call.params as {
+        type: string;
+        characterId: string;
+        description?: string;
+        itemId?: string;
+      };
       const result = call.result as ActionResult | RejectionResult;
 
       if (!result.success) {
@@ -71,8 +77,10 @@ export function buildFallbackNarration(actionCalls: ToolCallRecord[]): string {
           return `${params.characterId} moves to "${result.nodeId}"${outcomeSuffix}.`;
         case "use_technique":
           return `${params.characterId} uses "${result.techniqueId}"${outcomeSuffix}.`;
-        case "interact":
-          return `${params.characterId} attempts: ${params.description}${outcomeSuffix}.`;
+        case "interact": {
+          const itemSuffix = params.itemId ? ` (using "${params.itemId}")` : "";
+          return `${params.characterId} attempts: ${params.description}${itemSuffix}${outcomeSuffix}.`;
+        }
         default:
           return `${params.characterId}'s action succeeds${outcomeSuffix}.`;
       }
@@ -126,7 +134,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
     get_scope: defineChatSessionFunction({
       description:
         "Get the current scope for a character: their location, its environment, " +
-        "connections to other nodes, and who else is present.",
+        "connections to other nodes, their current effective stats and inventory " +
+        "(quantities remaining, what's equipped), and who else is present.",
       params: {
         type: "object",
         properties: { characterId: { type: "string" } },
@@ -196,11 +205,15 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         "Commit to an action that changes the world: move a character to a " +
         "connected node, have a character attempt a technique, or have a " +
         "character attempt anything else not covered by move/use_technique/say " +
-        "(attacking, using an item, investigating, manipulating the environment, " +
-        "etc.) via interact's free-form description. The character must actually " +
-        "know a technique to use it (check get_character_sheet first if unsure) — " +
+        "(attacking, investigating, manipulating the environment, etc.) via " +
+        "interact's free-form description. The character must actually know a " +
+        "technique to use it (check get_character_sheet first if unsure) — " +
         "unknown techniques are rejected immediately, with a reason. For interact, " +
-        "a named target must actually be present at the character's location.",
+        "a named target must actually be present at the character's location, and " +
+        "a named item must actually be in the character's inventory with quantity " +
+        "> 0 (check get_character_sheet for what they're carrying) — using a " +
+        "consumable item consumes one and applies its effect; using an equipment " +
+        "item toggles it equipped/unequipped.",
       params: {
         oneOf: [
           {
@@ -235,6 +248,11 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
               targetId: {
                 type: "string",
                 description: "Target character's id, or an empty string if untargeted.",
+              },
+              itemId: {
+                type: "string",
+                description:
+                  "Id of a carried item being used or equipped, or an empty string if none.",
               },
             },
           },

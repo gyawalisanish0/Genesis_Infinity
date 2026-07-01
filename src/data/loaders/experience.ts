@@ -9,11 +9,11 @@ import {
 import { WorldSchema, type World } from "../schemas/world.js";
 import { CharacterSheetSchema, type CharacterSheet } from "../schemas/character.js";
 import { resolveRulesetDefs } from "./character.js";
-import type { AbilityDef, SkillDef, EffectDef } from "../schemas/character.js";
+import type { AbilityDef, SkillDef, EffectDef, ItemDef } from "../schemas/character.js";
 
 export interface LoadedExperience {
   experience: Experience;
-  ruleset: { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[] };
+  ruleset: { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[]; items: ItemDef[] };
   escalation: Required<EscalationConfig>;
   world: World;
   characters: CharacterSheet[];
@@ -42,9 +42,10 @@ async function readJson(path: string): Promise<unknown> {
  *   <dir>/world.json        (WorldSchema)
  *   <dir>/characters/*.json (CharacterSheetSchema, one per file)
  *
- * Ruleset abilities/skills/effects are resolved against the defaults via
- * resolveRulesetDefs (per-entry fallback), and escalation tuning against
- * DEFAULT_ESCALATION_CONFIG (per-field fallback), before being returned.
+ * Ruleset abilities/skills/effects/items are resolved against the defaults
+ * via resolveRulesetDefs (per-entry fallback), and escalation tuning
+ * against DEFAULT_ESCALATION_CONFIG (per-field fallback), before being
+ * returned.
  */
 export async function loadExperience(dir: string): Promise<LoadedExperience> {
   const experience = ExperienceSchema.parse(await readJson(join(dir, "experience.json")));

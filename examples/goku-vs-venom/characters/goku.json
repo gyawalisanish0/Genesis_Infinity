@@ -24,6 +24,9 @@
     { "id": "kamehameha", "name": "Kamehameha", "description": "A concentrated beam of ki fired from cupped hands." },
     { "id": "instant-transmission", "name": "Instant Transmission", "description": "Teleports instantly to a locked-onto ki signature." }
   ],
+  "inventory": [
+    { "itemId": "health-potion", "quantity": 2 }
+  ],
   "hitPoints": { "current": 180, "max": 180 },
   "armorClass": 18
 }

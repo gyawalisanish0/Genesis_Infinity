@@ -2,12 +2,15 @@ import {
   AbilityDefSchema,
   SkillDefSchema,
   EffectDefSchema,
+  ItemDefSchema,
   DEFAULT_ABILITIES,
   DEFAULT_SKILLS,
   DEFAULT_EFFECTS,
+  DEFAULT_ITEMS,
   type AbilityDef,
   type SkillDef,
   type EffectDef,
+  type ItemDef,
 } from "../schemas/character.js";
 
 /**
@@ -95,16 +98,41 @@ export function resolveEffectDefs(declared: unknown[] | undefined): EffectDef[] 
 }
 
 /**
- * Resolves ability, skill, and effect definitions for an Experience in one
- * call, since skill resolution depends on the resolved ability set.
+ * Resolves an Experience's declared item catalog the same way as
+ * resolveEffectDefs — per-entry fallback, no cross-reference check needed.
+ */
+export function resolveItemDefs(declared: unknown[] | undefined): ItemDef[] {
+  const resolved = new Map<string, ItemDef>();
+
+  for (const entry of declared ?? []) {
+    const result = ItemDefSchema.safeParse(entry);
+    if (result.success && !resolved.has(result.data.id)) {
+      resolved.set(result.data.id, result.data);
+    }
+  }
+
+  for (const fallback of DEFAULT_ITEMS) {
+    if (!resolved.has(fallback.id)) {
+      resolved.set(fallback.id, fallback);
+    }
+  }
+
+  return Array.from(resolved.values());
+}
+
+/**
+ * Resolves ability, skill, effect, and item definitions for an Experience
+ * in one call, since skill resolution depends on the resolved ability set.
  */
 export function resolveRulesetDefs(experience: {
   abilities?: unknown[];
   skills?: unknown[];
   effects?: unknown[];
-}): { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[] } {
+  items?: unknown[];
+}): { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[]; items: ItemDef[] } {
   const abilities = resolveAbilityDefs(experience.abilities);
   const skills = resolveSkillDefs(experience.skills, abilities);
   const effects = resolveEffectDefs(experience.effects);
-  return { abilities, skills, effects };
+  const items = resolveItemDefs(experience.items);
+  return { abilities, skills, effects, items };
 }

@@ -161,6 +161,69 @@ export const DEFAULT_EFFECTS: EffectDef[] = [
 ];
 
 /**
+ * A carriable item definition an Experience can declare — a shared catalog
+ * (unlike techniques, which are per-character with no template) since items
+ * are usually generic: "Health Potion" means the same thing for every
+ * character who carries one. `type` determines how `tools/`'s
+ * `applyItemUse` treats it on use via `interact`'s `itemId`:
+ * - `"consumable"` — `healAmount` (if set) is applied once, instantly, to
+ *   current HP, then the item's quantity is decremented. Permanent, not a
+ *   decaying effect the way escalation debuffs/hazards are.
+ * - `"equipment"` — `armorClassDelta`/`maxHitPointsDelta` apply as a
+ *   standing modifier for as long as the item is equipped (toggled on
+ *   each use), removed the moment it's unequipped. Not time-based at all.
+ * Fields are only meaningful for the type they document; the schema stays
+ * flat (not a discriminated union) for consistency with `EffectDefSchema`.
+ */
+export const ItemDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  type: z.enum(["consumable", "equipment"]),
+  armorClassDelta: z.number().int().optional(),
+  maxHitPointsDelta: z.number().int().optional(),
+  healAmount: z.number().int().positive().optional(),
+});
+export type ItemDef = z.infer<typeof ItemDefSchema>;
+
+/**
+ * Fallback item catalog for Experiences that don't declare their own —
+ * resolved the same "per-entry fallback" way as DEFAULT_EFFECTS (see
+ * data/loaders/character.ts's resolveItemDefs).
+ */
+export const DEFAULT_ITEMS: ItemDef[] = [
+  {
+    id: "health-potion",
+    name: "Health Potion",
+    description: "A vial of restorative liquid.",
+    type: "consumable",
+    healAmount: 20,
+  },
+  {
+    id: "iron-shield",
+    name: "Iron Shield",
+    description: "A sturdy shield that deflects incoming blows while carried.",
+    type: "equipment",
+    armorClassDelta: 2,
+  },
+];
+
+/**
+ * A character's carried quantity of a catalog item, plus whether it's
+ * currently equipped (meaningful only for `type: "equipment"` items —
+ * consumables are used up, not worn). This is the character's *starting*
+ * inventory; actual current quantity/equipped state is derived from dtm/
+ * (see state/index.ts), the same "sheet is static, state is derived"
+ * pattern used for position and hit points.
+ */
+export const InventoryEntrySchema = z.object({
+  itemId: z.string(),
+  quantity: z.number().int().nonnegative(),
+  equipped: z.boolean().optional(),
+});
+export type InventoryEntry = z.infer<typeof InventoryEntrySchema>;
+
+/**
  * The mechanical layer of a character — stats and skills used by rules/
  * for checks. Identity fields (class/race/background) are open strings,
  * not fixed enums, so non-fantasy settings aren't forced into D&D content.
@@ -180,6 +243,7 @@ export const CharacterSheetSchema = z
     abilities: z.array(AbilityScoreSchema),
     skills: z.array(SkillSchema),
     techniques: z.array(TechniqueDefSchema).default([]),
+    inventory: z.array(InventoryEntrySchema).default([]),
     hitPoints: HitPointsSchema.optional(),
     armorClass: z.number().optional(),
   })
@@ -193,6 +257,17 @@ export const CharacterSheetSchema = z
         });
       }
       techniqueIds.add(technique.id);
+    }
+
+    const inventoryItemIds = new Set<string>();
+    for (const entry of sheet.inventory) {
+      if (inventoryItemIds.has(entry.itemId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate inventory item id "${entry.itemId}"`,
+        });
+      }
+      inventoryItemIds.add(entry.itemId);
     }
 
     const abilityIds = new Set<string>();
