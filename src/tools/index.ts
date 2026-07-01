@@ -1,9 +1,10 @@
 import type { Dtm, DtmEvent } from "../dtm/index.js";
 import type { World } from "../data/schemas/world.js";
+import { findNode, mergeEnvironmentalCodes } from "../data/schemas/world.js";
 import type { LoadedExperience } from "../data/loaders/experience.js";
 import type { CharacterSheet, EffectDef } from "../data/schemas/character.js";
 import { getState, type AppliedDebuff } from "../state/index.js";
-import { getScope, findNode, type Scope } from "../scope/index.js";
+import { getScope, type Scope } from "../scope/index.js";
 import type { Timeline } from "../timeline/index.js";
 
 /** Outcome of an action, as decided by rules/ (see rules/index.ts). */
@@ -69,7 +70,7 @@ export function getScopeTool(
   params: { characterId: string },
   currentTurn: number,
 ): Scope {
-  const state = getState(ctx.dtm, ctx.loaded, currentTurn, ctx.timeline.currentUnit());
+  const state = getState(ctx.dtm, ctx.loaded, ctx.world, currentTurn, ctx.timeline.currentUnit());
   return getScope(ctx.world, state, params.characterId);
 }
 
@@ -118,11 +119,41 @@ export function sayTool(
   return { success: true, message: params.message };
 }
 
+export interface NoteHazardResult {
+  success: true;
+  description: string;
+}
+
+/**
+ * Logs a one-off narrative note to history — for a notable environmental
+ * detail or hazard that has no mechanical definition (see
+ * applyEnvironmentalEffects's null fallback above). Always permitted, like
+ * `say`: no checkAction/rules/ gate, no escalation. Not for mechanically-
+ * resolved effects — those apply automatically and need no AI involvement.
+ * "One-time" is enforced by prompt guidance (see ai/index.ts), not hard
+ * dedup bookkeeping — this is flavor text with no mechanical stakes, so a
+ * little redundancy isn't a correctness concern worth engineering around.
+ */
+export function noteHazardTool(
+  ctx: ToolContext,
+  params: { characterId: string; description: string },
+  turnTimestamp: number,
+): NoteHazardResult {
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: turnTimestamp,
+    type: "hazard.noted",
+    entityId: params.characterId,
+    payload: { description: params.description },
+  });
+  return { success: true, description: params.description };
+}
+
 function checkMove(
   ctx: ToolContext,
   action: Extract<Action, { type: "move" }>,
 ): ActionCheck {
-  const state = getState(ctx.dtm, ctx.loaded, action.timestamp, ctx.timeline.currentUnit());
+  const state = getState(ctx.dtm, ctx.loaded, ctx.world, action.timestamp, ctx.timeline.currentUnit());
   const character = state.characters.find((c) => c.sheet.id === action.characterId);
   if (!character) {
     return { allowed: false, reason: `Character "${action.characterId}" not found` };
@@ -142,6 +173,54 @@ function checkMove(
   return { allowed: true };
 }
 
+/**
+ * Deterministically resolves and applies any mechanical environmental
+ * effects at a node a character has just arrived at. Each mechanical
+ * EnvironmentalCode's effectId is looked up in the Experience's resolved
+ * effect pool — the same shared pool escalation draws from. A match
+ * applies exactly like an escalation debuff: same `debuff.applied` event
+ * shape, same `state/`'s `effectiveStats` machinery, timeline-based
+ * duration (reusing `escalation.debuffDurationUnits`, since there's no
+ * separate environmental-duration config yet). No match is a null
+ * fallback — nothing mechanical happens; the AI may still choose to log a
+ * one-off narrative note via `note_hazard` (see ai/index.ts). This is not
+ * a model judgment call — no AI involvement in whether the effect applies.
+ */
+function applyEnvironmentalEffects(
+  ctx: ToolContext,
+  characterId: string,
+  nodeId: string,
+  turnTimestamp: number,
+): void {
+  const location = findNode(ctx.world, nodeId);
+  const codes = mergeEnvironmentalCodes(location.region, location.node);
+
+  for (const code of codes) {
+    if (!code.mechanical || !code.effectId) {
+      continue;
+    }
+
+    const template = ctx.loaded.ruleset.effects.find((effect) => effect.id === code.effectId);
+    if (!template) {
+      continue; // null fallback: no matching effect definition, do nothing mechanically
+    }
+
+    const appliedAtUnit = ctx.timeline.currentUnit();
+    const debuffApplied: AppliedDebuff = {
+      ...template,
+      appliedAtUnit,
+      expiresAtUnit: appliedAtUnit + ctx.loaded.escalation.debuffDurationUnits,
+    };
+    ctx.dtm.append({
+      experienceId: ctx.loaded.experience.id,
+      timestamp: turnTimestamp,
+      type: "debuff.applied",
+      entityId: characterId,
+      payload: debuffApplied,
+    });
+  }
+}
+
 function applyMove(
   ctx: ToolContext,
   action: Extract<Action, { type: "move" }>,
@@ -155,6 +234,7 @@ function applyMove(
     nodeId: action.targetNodeId,
     payload: { outcome },
   });
+  applyEnvironmentalEffects(ctx, action.characterId, action.targetNodeId, action.timestamp);
   return { success: true, nodeId: action.targetNodeId, outcome };
 }
 
@@ -213,7 +293,7 @@ function checkInteract(
     return { allowed: true };
   }
 
-  const state = getState(ctx.dtm, ctx.loaded, action.timestamp, ctx.timeline.currentUnit());
+  const state = getState(ctx.dtm, ctx.loaded, ctx.world, action.timestamp, ctx.timeline.currentUnit());
   const actor = state.characters.find((c) => c.sheet.id === action.characterId);
   if (!actor) {
     return { allowed: false, reason: `Character "${action.characterId}" not found` };

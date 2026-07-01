@@ -142,3 +142,35 @@ export const WorldSchema = z
     }
   });
 export type World = z.infer<typeof WorldSchema>;
+
+export interface NodeLocation {
+  region: Region;
+  node: Node;
+}
+
+/** Finds a node and its parent region anywhere in the world, by node id. */
+export function findNode(world: World, nodeId: string): NodeLocation {
+  for (const region of world.regions) {
+    const node = region.nodes.find((n) => n.id === nodeId);
+    if (node) return { region, node };
+  }
+  throw new Error(`Node "${nodeId}" not found in world "${world.id}"`);
+}
+
+/**
+ * Merges a node's environmental codes over its region's, keyed by
+ * (category, value) — a node entry overrides the region's matching entry.
+ * Lives here (not scope/) rather than only computing a per-turn AI payload,
+ * so state/ can also resolve a node's environmental codes without
+ * depending on scope/ (which itself depends on state/'s types).
+ */
+export function mergeEnvironmentalCodes(region: Region, node: Node): EnvironmentalCode[] {
+  const merged = new Map<string, EnvironmentalCode>();
+  for (const code of region.environmentalCodes ?? []) {
+    merged.set(`${code.category}:${code.value}`, code);
+  }
+  for (const code of node.environmentalCodes ?? []) {
+    merged.set(`${code.category}:${code.value}`, code);
+  }
+  return [...merged.values()];
+}

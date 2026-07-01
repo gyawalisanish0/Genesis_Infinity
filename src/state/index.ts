@@ -1,6 +1,8 @@
 import type { Dtm } from "../dtm/index.js";
 import type { LoadedExperience } from "../data/loaders/experience.js";
 import type { CharacterSheet, EffectDef, HitPoints } from "../data/schemas/character.js";
+import type { EnvironmentalCode, World } from "../data/schemas/world.js";
+import { findNode, mergeEnvironmentalCodes } from "../data/schemas/world.js";
 
 /**
  * An EffectDef as actually applied to a character at a point in time.
@@ -34,6 +36,13 @@ export interface CharacterState {
   activeDebuffs: AppliedDebuff[];
   /** sheet's armorClass/hitPoints with activeDebuffs' deltas applied. */
   effectiveStats: EffectiveStats;
+  /**
+   * The current node's merged environmental codes (node overrides region).
+   * Surfaced here — not just in scope/'s per-turn payload — so rules/'s
+   * tri-state judgment can factor hazards into valid/neutral/invalid
+   * decisions (e.g. acting while a toxic atmosphere is mechanically active).
+   */
+  environmentalCodes: EnvironmentalCode[];
 }
 
 export interface StateSnapshot {
@@ -94,18 +103,20 @@ function computeEffectiveStats(sheet: CharacterSheet, activeDebuffs: AppliedDebu
 
 /**
  * Computes the current state snapshot for a loaded Experience: every
- * character's sheet, current node, active debuffs, and effective stats
- * (sheet + debuffs applied), derived from dtm/ rather than stored
- * independently (see docs/ARCHITECTURE.md, "State"). `currentTurn` is the
- * engine's turn counter, echoed into the snapshot (AI-visible, e.g. via
- * rules/'s judgment). `currentTimelineUnit` is a separate, real-wall-clock-
- * anchored value (see timeline/index.ts) used only internally here, to
- * filter out expired debuffs — it is not itself added to the snapshot, so
- * this doesn't make the timeline AI-visible.
+ * character's sheet, current node, active debuffs, effective stats (sheet +
+ * debuffs applied), and the current node's environmental codes, derived
+ * from dtm/ rather than stored independently (see docs/ARCHITECTURE.md,
+ * "State"). `currentTurn` is the engine's turn counter, echoed into the
+ * snapshot (AI-visible, e.g. via rules/'s judgment). `currentTimelineUnit`
+ * is a separate, real-wall-clock-anchored value (see timeline/index.ts)
+ * used only internally here, to filter out expired debuffs — it is not
+ * itself added to the snapshot, so this doesn't make the timeline
+ * AI-visible.
  */
 export function getState(
   dtm: Dtm,
   loaded: LoadedExperience,
+  world: World,
   currentTurn: number,
   currentTimelineUnit: number,
 ): StateSnapshot {
@@ -121,12 +132,15 @@ export function getState(
     if (startingNodeId === undefined) {
       throw new Error(`Character "${sheet.id}" has no starting placement in this Experience`);
     }
+    const nodeId = currentNodeId(dtm, loaded.experience.id, sheet.id, startingNodeId);
     const activeDebuffs = activeDebuffsFor(dtm, loaded.experience.id, sheet.id, currentTimelineUnit);
+    const location = findNode(world, nodeId);
     return {
       sheet,
-      nodeId: currentNodeId(dtm, loaded.experience.id, sheet.id, startingNodeId),
+      nodeId,
       activeDebuffs,
       effectiveStats: computeEffectiveStats(sheet, activeDebuffs),
+      environmentalCodes: mergeEnvironmentalCodes(location.region, location.node),
     };
   });
 

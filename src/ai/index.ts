@@ -10,6 +10,7 @@ import {
   getCharacterSheetTool,
   getRecentDtmTool,
   sayTool,
+  noteHazardTool,
   checkAction,
   applyAction,
   rejectAction,
@@ -127,6 +128,25 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       handler: (params) =>
         record("say", params, sayTool(options.toolCtx, params, turn.timestamp)),
     }),
+    note_hazard: defineChatSessionFunction({
+      description:
+        "Log a one-off note to history about a notable environmental detail or " +
+        "hazard — use this once, the first time you notice something worth " +
+        "remembering, not every turn a character remains near it. Do not use " +
+        "this for mechanically-defined effects (get_scope's environmentalCodes " +
+        "with a resolvable effectId) — those apply automatically with no tool " +
+        "call needed. This is only for flavor/unresolved hazards worth a " +
+        "permanent note.",
+      params: {
+        type: "object",
+        properties: {
+          characterId: { type: "string" },
+          description: { type: "string" },
+        },
+      },
+      handler: (params) =>
+        record("note_hazard", params, noteHazardTool(options.toolCtx, params, turn.timestamp)),
+    }),
     action: defineChatSessionFunction({
       description:
         "Commit to an action that changes the world: move a character to a " +
@@ -194,6 +214,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         const state = getState(
           options.toolCtx.dtm,
           options.toolCtx.loaded,
+          options.toolCtx.world,
           action.timestamp,
           options.toolCtx.timeline.currentUnit(),
         );

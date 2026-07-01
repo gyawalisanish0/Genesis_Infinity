@@ -230,7 +230,7 @@ an event-sourcing pattern — DTM is the single source of truth.
   | `id` | INTEGER PK | autoincrement, ordering tiebreaker |
   | `experience_id` | TEXT | scopes events to a single Experience/playthrough |
   | `timestamp` | INTEGER | in-game/engine time, not wall clock |
-  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"` |
+  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"`, `"hazard.noted"` |
   | `entity_id` | TEXT, nullable | character/NPC/item the event concerns, if any |
   | `node_id` | TEXT, nullable | node the event occurred at, if applicable |
   | `position_x` / `position_y` | INTEGER, nullable | for entity/item position-update events |
@@ -408,30 +408,38 @@ design above for beta scope.
 - **`dtm/`** (`src/dtm/index.ts`) — implements the `dtm_events` schema above
   via `node:sqlite`'s `DatabaseSync`, with no ORM (see DTM section above for
   the resolved query interface).
-- **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded, currentTurn,
-  currentTimelineUnit)` returns a `StateSnapshot`: every character's sheet,
-  current `nodeId` (derived from `dtm.lastPosition`, falling back to the
-  Experience's declared `startingNodeId`), `activeDebuffs` — non-expired
-  `AppliedDebuff`s (an `EffectDef` plus `appliedAtUnit`/`expiresAtUnit`,
-  `timeline/` units — real-wall-clock-anchored, not turn count) derived
-  from `debuff.applied` dtm events, filtered by `expiresAtUnit >
-  currentTimelineUnit` — and `effectiveStats`, `computeEffectiveStats`'s
-  result: the sheet's
+- **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded, world,
+  currentTurn, currentTimelineUnit)` returns a `StateSnapshot`: every
+  character's sheet, current `nodeId` (derived from `dtm.lastPosition`,
+  falling back to the Experience's declared `startingNodeId`),
+  `activeDebuffs` — non-expired `AppliedDebuff`s (an `EffectDef` plus
+  `appliedAtUnit`/`expiresAtUnit`, `timeline/` units — real-wall-clock-
+  anchored, not turn count) derived from `debuff.applied` dtm events,
+  filtered by `expiresAtUnit > currentTimelineUnit` — `effectiveStats`,
+  `computeEffectiveStats`'s result: the sheet's
   `armorClass`/`hitPoints` with `activeDebuffs`' deltas summed in (max HP
   floored at 0, current HP clamped down if the effective max drops below
-  it). Confirms the "state is a derived view, never independently stored"
-  principle above. The effect pool itself lives in `loaded.ruleset.effects`
-  (Experience-resolved, see Ruleset Declaration & Fallback above) rather
-  than as a `state/`-owned constant. Computing `effectiveStats` in `state/`
-  rather than leaving `rules/` to sum deltas out of `activeDebuffs` itself
-  follows the same principle as `scope/`'s computed direction below: a fact
-  the engine hands the AI, not something left for it to derive.
-  `currentTimelineUnit` is used only for this expiry filter — it is not
-  itself added to `StateSnapshot`, so this doesn't make the timeline value
-  AI-visible, only its derived effect (which debuffs remain active).
+  it) — and `environmentalCodes`, the current node's merged codes (via
+  `findNode`/`mergeEnvironmentalCodes`, both moved to
+  `data/schemas/world.ts` so `state/` can call them without depending on
+  `scope/`, which itself depends on `state/`'s types — importing them from
+  `scope/` would have created a cycle). Confirms the "state is a derived
+  view, never independently stored" principle above. The effect pool
+  itself lives in `loaded.ruleset.effects` (Experience-resolved, see
+  Ruleset Declaration & Fallback above) rather than as a `state/`-owned
+  constant. Computing `effectiveStats` in `state/` rather than leaving
+  `rules/` to sum deltas out of `activeDebuffs` itself follows the same
+  principle as `scope/`'s computed direction below: a fact the engine
+  hands the AI, not something left for it to derive. `environmentalCodes`
+  is included so `rules/`'s tri-state judgment can factor hazards into
+  valid/neutral/invalid decisions. `currentTimelineUnit` is used only for
+  the expiry filter — it is not itself added to `StateSnapshot`, so this
+  doesn't make the timeline value AI-visible, only its derived effect
+  (which debuffs remain active).
 - **`scope/`** (`src/scope/index.ts`) — `getScope(world, state, characterId)`
-  returns a character's current node (merged environmental codes per the
-  node-overrides-region rule above, and connections with **computed**
+  returns a character's current node (environmental codes now read
+  directly from `state/`'s already-computed `CharacterState.environmentalCodes`
+  rather than recomputing the merge, and connections with **computed**
   direction), their `effectiveStats` (see `state/` above — this is how the
   AI actually sees debuff-adjusted stats, via `get_scope`), plus which other
   characters are co-located (`othersPresent`). Direction is an 8-point
@@ -453,6 +461,16 @@ design above for beta scope.
     in history, but it's neither a read-only check tool nor a validated
     `action`; a third category for world-changes the engine never needs to
     contest.
+  - `note_hazard` — the same ungated category as `say`, for a one-off
+    narrative note about a notable environmental detail or hazard that has
+    no mechanical definition (see `applyEnvironmentalEffects`'s null
+    fallback below). Appends a `hazard.noted` dtm event with
+    `{description}`. "One-time" is enforced by prompt guidance to the
+    model (use it once per notable hazard, not every turn), not hard
+    engine-side dedup — this is flavor text with no mechanical stakes, so
+    occasional redundancy isn't a correctness concern worth engineering
+    around. Not for mechanically-resolved effects, which apply
+    automatically with no tool call needed.
   - `action` (action) — a single tool with a discriminated-union payload
     (`{type: "move", ...}`, `{type: "use_technique", ...}`, or
     `{type: "interact", ...}`), rather than one tool per action type.
@@ -487,7 +505,22 @@ design above for beta scope.
       `{techniqueId, targetId}` payload for `use_technique`,
       `character.interacted` with a `{description, targetId}` payload for
       `interact`), tagged with `outcome` (`"valid"` or `"neutral"`, per
-      `rules/`'s tri-state judgment below).
+      `rules/`'s tri-state judgment below). `applyMove` additionally calls
+      `applyEnvironmentalEffects` after the move's own dtm event: it
+      resolves the target node's merged environmental codes (via
+      `findNode`/`mergeEnvironmentalCodes` from `data/schemas/world.ts`),
+      and for each `mechanical: true` code with an `effectId`, looks that
+      id up in `ctx.loaded.ruleset.effects` — the same shared pool
+      escalation draws from. A match applies exactly like an escalation
+      debuff (identical `debuff.applied` event shape, so it's picked up by
+      `state/`'s `activeDebuffs`/`effectiveStats` with no extra code,
+      timeline-based duration reusing `escalation.debuffDurationUnits`
+      since there's no separate environmental-duration config yet). No
+      match is a **null fallback**: nothing mechanical happens — no
+      engine-invented default effect gets substituted, since there's no
+      universal "toxic" or "cold" effect the engine could sensibly guess
+      at for content the Experience didn't define. This is deterministic;
+      no model call is involved in whether an effect applies.
     - `rejectAction(ctx, characterId, actionType, reason, turn)` — the
       escalation path, called whenever `checkAction` fails or `rules/`
       judges an action `"invalid"`. Reads its tuning from
@@ -526,9 +559,12 @@ design above for beta scope.
   (GBNF `enum`) — `"valid"` succeeds as attempted, `"neutral"` is a fizzle
   (attempted, but doesn't fully succeed given current state/conditions —
   not a rejection), `"invalid"` doesn't happen at all. The state passed to
-  the model includes each character's `activeDebuffs`, so the judgment can
-  factor in prior escalation. Called by `ai/`'s `action` handler only for
-  actions that already passed `tools/`'s `checkAction`.
+  the model includes each character's `activeDebuffs` and current node's
+  `environmentalCodes`, so the judgment can factor in prior escalation and
+  environmental hazards (e.g. acting in a mechanically-toxic location
+  might reasonably be judged `"neutral"` instead of `"valid"`). Called by
+  `ai/`'s `action` handler only for actions that already passed `tools/`'s
+  `checkAction`.
   Since `interact` has no hard gate beyond target presence, `rules/`'s
   system prompt is the only grounding its free-form content gets, so it's
   written to be explicit rather than relying on the model to infer intent:
@@ -653,7 +689,14 @@ Goku's effective armor class accordingly while his base sheet is
 untouched, `scope/`'s `effectiveStats` matches `state/`'s exactly, a
 character with no active debuffs shows effective stats identical to its
 base sheet, and a sheet declaring neither `armorClass` nor `hitPoints`
-resolves to an empty `effectiveStats` rather than throwing.
+resolves to an empty `effectiveStats` rather than throwing. Also verified
+`applyEnvironmentalEffects` against a node with two injected `mechanical`
+environmental codes (not part of the checked-in fixture): one with an
+`effectId` matching a pool entry applied a real debuff on arrival
+(confirmed via the resulting `effectiveStats` change), the other with an
+unmatched `effectId` produced no mechanical effect at all (the null
+fallback), and `note_hazard` successfully logged a `hazard.noted` event
+for the unresolved one.
 
 ### Beta Preparation
 
@@ -661,20 +704,6 @@ Concrete next targets for the beta slice, called out ahead of the rest of
 Open/Deferred below since they're the planned next work rather than
 longer-tail backlog:
 
-- **`effectId` vocabulary and `rules/` effect resolution** — `EnvironmentalCode`
-  (World section above) already carries an `effectId` when `mechanical` is
-  true, but nothing yet gives that id meaning. Decided design: `effectId`
-  will reference an id in the same shared pool as escalation
-  (`ctx.loaded.ruleset.effects`/`EffectDefSchema`) rather than a separate
-  vocabulary, and application will be **both** deterministic (auto-applied
-  on arrival at a hazardous node, no AI judgment) **and** visible to
-  `rules/`'s tri-state judgment for situational nuance. Duration/expiry now
-  has a foundation to build on: `timeline/`'s real-wall-clock-anchored
-  units, the same mechanism escalation debuffs' `appliedAtUnit`/
-  `expiresAtUnit` now use (see `rejectAction` above) — an environmental
-  effect applied on arrival would reuse this exact shape. The application
-  logic itself (the move-arrival hook, the `rules/` prompt changes for
-  visibility) is not yet implemented.
 - **Item/inventory schema** — `interact`'s free-form description can
   already describe using an item, but `CharacterSheet` has no concept of
   carried items, so nothing structurally grounds "does this character

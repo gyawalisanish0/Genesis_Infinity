@@ -1,5 +1,8 @@
-import type { World, Node, Region, EnvironmentalCode } from "../data/schemas/world.js";
+import type { EnvironmentalCode, World } from "../data/schemas/world.js";
+import { findNode, type NodeLocation } from "../data/schemas/world.js";
 import type { StateSnapshot, CharacterState } from "../state/index.js";
+
+export { findNode } from "../data/schemas/world.js";
 
 export interface ScopedConnection {
   targetNodeId: string;
@@ -29,18 +32,6 @@ export interface Scope {
   othersPresent: ScopedCharacter[];
 }
 
-/** Merges a node's environmental codes over its region's, keyed by (category, value). */
-function mergeEnvironmentalCodes(region: Region, node: Node): EnvironmentalCode[] {
-  const merged = new Map<string, EnvironmentalCode>();
-  for (const code of region.environmentalCodes ?? []) {
-    merged.set(`${code.category}:${code.value}`, code);
-  }
-  for (const code of node.environmentalCodes ?? []) {
-    merged.set(`${code.category}:${code.value}`, code);
-  }
-  return [...merged.values()];
-}
-
 // 8-point compass from a delta. +x = east, +y = north.
 function compassDirection(dx: number, dy: number): string {
   const ns = dy > 0 ? "north" : dy < 0 ? "south" : "";
@@ -54,20 +45,6 @@ function layerDirection(fromLayer: number | undefined, toLayer: number | undefin
   if (to > from) return "up";
   if (to < from) return "down";
   return "here";
-}
-
-export interface NodeLocation {
-  region: Region;
-  node: Node;
-}
-
-/** Finds a node and its parent region anywhere in the world, by node id. */
-export function findNode(world: World, nodeId: string): NodeLocation {
-  for (const region of world.regions) {
-    const node = region.nodes.find((n) => n.id === nodeId);
-    if (node) return { region, node };
-  }
-  throw new Error(`Node "${nodeId}" not found in world "${world.id}"`);
 }
 
 /**
@@ -125,7 +102,7 @@ export function getScope(world: World, state: StateSnapshot, characterId: string
       name: from.node.name,
       description: from.node.description,
       type: from.node.type,
-      environmentalCodes: mergeEnvironmentalCodes(from.region, from.node),
+      environmentalCodes: character.environmentalCodes,
       connections,
     },
     othersPresent,

@@ -65,7 +65,13 @@ function printScope(
   characterId: string,
   currentTurn: number,
 ): void {
-  const state = getState(toolCtx.dtm, toolCtx.loaded, currentTurn, toolCtx.timeline.currentUnit());
+  const state = getState(
+    toolCtx.dtm,
+    toolCtx.loaded,
+    toolCtx.world,
+    currentTurn,
+    toolCtx.timeline.currentUnit(),
+  );
   const scope = getScope(toolCtx.world, state, characterId);
   console.log(`\n--- ${label} ---`);
   console.log(JSON.stringify(scope, null, 2));
