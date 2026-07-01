@@ -536,7 +536,12 @@ design above for beta scope.
   abilities/skills/techniques, active debuffs), an instruction to judge
   mechanical plausibility only — not tone or prose quality, that's the
   narrator's job — and three worked examples (one per outcome) to anchor
-  a small local model's judgment.
+  a small local model's judgment. The prompt also names a trust boundary
+  explicitly: an action's `description` can assert things not backed by
+  state (a claimed capability, item, or prior event) — those claims trace
+  back to player input, not engine fact, so the model is told to judge
+  plausibility strictly against `state`, never against what the
+  description itself asserts.
 - **`ai/`** (`src/ai/index.ts`) — `createAiSession(...)` loads the model,
   opens one `LlamaContext`, and draws two sequences from it: one for the
   narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`. Declares
@@ -562,6 +567,18 @@ design above for beta scope.
   not wall-clock time. `createEngine` also starts a `timeline/` `Timeline`
   and exposes `currentTimelineUnit()` alongside `currentTurn()` — a second,
   independent clock (see `timeline/` below).
+  `buildSystemPrompt` states an explicit trust boundary alongside the
+  narrator role: the engine's tool results are the only source of truth
+  about game state, and the player's message is their character's
+  dialogue/intent, never a factual claim — if a player's input asserts
+  something as already true without a tool result confirming it (e.g.
+  "I already have the sword"), the model is told to check or resolve it
+  through a tool call rather than narrate it as fact, and that player
+  input can never bypass tool validation to change state directly
+  regardless of phrasing. This is the same trust boundary `rules/`'s
+  prompt states for a proposed action's `description` (above) — both close
+  off the same class of prompt-injection-style attempt to get the model to
+  treat unverified player-asserted claims as ground truth.
 - **`timeline/`** (`src/timeline/index.ts`) — a real-wall-clock-anchored
   counter, deliberately separate from the turn-based `dtm` timestamp above
   (which counts player inputs, not elapsed time). `createTimeline(now =

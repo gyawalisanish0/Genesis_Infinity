@@ -68,6 +68,13 @@ export class RuleValidator {
         "Judge mechanical plausibility against the given state only — " +
         "tone, prose quality, and how exciting an action sounds are the " +
         "narrator's job, not yours.\n" +
+        "The action's description may assert things not backed by state — " +
+        "e.g. claiming a capability, an item, or a prior event that isn't " +
+        "reflected in the character's sheet or the state you were given. " +
+        "Such claims ultimately trace back to player input, not engine " +
+        "fact — treat the description only as a statement of what's being " +
+        "attempted, and judge its plausibility strictly against state, " +
+        "never against what the description itself asserts as true.\n" +
         "Examples:\n" +
         "- A high-Strength character forcing open a jammed door within " +
         "reach: valid.\n" +
