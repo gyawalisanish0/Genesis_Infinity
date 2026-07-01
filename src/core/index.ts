@@ -29,10 +29,13 @@ export interface Engine {
 }
 
 function buildSystemPrompt(loaded: LoadedExperience): string {
-  const characterNames = loaded.characters.map((c) => c.name).join(", ");
+  const characterList = loaded.characters
+    .map((c) => `${c.name} (id: "${c.id}")`)
+    .join(", ");
   return [
     `You are the narrator and game master for "${loaded.experience.name}", set in "${loaded.world.name}".`,
-    `Characters in this Experience: ${characterNames}.`,
+    `Characters in this Experience: ${characterList}.`,
+    "Always use a character's id — not their name — for characterId parameters in tool calls.",
     "Use the available tools to check the game state before narrating or acting.",
     "Never describe a change to the world without making it happen through a tool call first.",
     "",

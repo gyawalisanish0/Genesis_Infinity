@@ -65,24 +65,38 @@ export interface RejectionResult {
   debuffApplied?: AppliedDebuff;
 }
 
-/** Check tool: the AI-visible scope (location, environment, connections, who's present) for a character. */
+export interface ToolError {
+  error: string;
+}
+
+/**
+ * Check tool: the AI-visible scope (location, environment, connections,
+ * who's present) for a character. Returns a ToolError instead of throwing
+ * on an unresolvable characterId, so a bad tool call surfaces to the model
+ * as a result it can react to (e.g. retry with a corrected id) rather than
+ * crashing the whole session.
+ */
 export function getScopeTool(
   ctx: ToolContext,
   params: { characterId: string },
   currentTurn: number,
-): Scope {
+): Scope | ToolError {
   const state = getState(ctx.dtm, ctx.loaded, ctx.world, currentTurn, ctx.timeline.currentUnit());
-  return getScope(ctx.world, state, params.characterId);
+  try {
+    return getScope(ctx.world, state, params.characterId);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /** Check tool: a character's static sheet (identity, abilities, skills). */
 export function getCharacterSheetTool(
   ctx: ToolContext,
   params: { characterId: string },
-): CharacterSheet {
+): CharacterSheet | ToolError {
   const sheet = ctx.loaded.characters.find((c) => c.id === params.characterId);
   if (!sheet) {
-    throw new Error(`Character "${params.characterId}" not found`);
+    return { error: `Character "${params.characterId}" not found` };
   }
   return sheet;
 }
