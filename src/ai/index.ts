@@ -4,7 +4,7 @@ import {
   LlamaChatSession,
   type ChatSessionModelFunctions,
 } from "node-llama-cpp";
-import type { Action, ToolContext } from "../tools/index.js";
+import type { Action, ActionResult, RejectionResult, ToolContext } from "../tools/index.js";
 import {
   getScopeTool,
   getCharacterSheetTool,
@@ -16,6 +16,7 @@ import {
   rejectAction,
 } from "../tools/index.js";
 import { RuleValidator } from "../rules/index.js";
+import { NarrationAuditor } from "../audit/index.js";
 import { getState } from "../state/index.js";
 
 function describeAction(action: Action): string {
@@ -41,6 +42,44 @@ export interface ToolCallRecord {
   result: unknown;
 }
 
+/**
+ * How many times NarrationAuditor is given a chance to regenerate before
+ * falling back to a deterministic, tool-result-only sentence.
+ */
+const MAX_NARRATION_RETRIES = 2;
+
+/**
+ * A deterministic, model-free fallback sentence built directly from an
+ * `action` tool call's own params/result — used only when the narration
+ * session couldn't produce a version NarrationAuditor accepted after
+ * MAX_NARRATION_RETRIES attempts. Guarantees the player is never shown
+ * narration confirmed to contradict what actually happened.
+ */
+export function buildFallbackNarration(actionCalls: ToolCallRecord[]): string {
+  return actionCalls
+    .map((call) => {
+      const params = call.params as { type: string; characterId: string; description?: string };
+      const result = call.result as ActionResult | RejectionResult;
+
+      if (!result.success) {
+        return `${params.characterId}'s action fails: ${result.reason}`;
+      }
+
+      const outcomeSuffix = result.outcome === "neutral" ? ", but it doesn't fully succeed" : "";
+      switch (params.type) {
+        case "move":
+          return `${params.characterId} moves to "${result.nodeId}"${outcomeSuffix}.`;
+        case "use_technique":
+          return `${params.characterId} uses "${result.techniqueId}"${outcomeSuffix}.`;
+        case "interact":
+          return `${params.characterId} attempts: ${params.description}${outcomeSuffix}.`;
+        default:
+          return `${params.characterId}'s action succeeds${outcomeSuffix}.`;
+      }
+    })
+    .join(" ");
+}
+
 export interface AiSessionOptions {
   modelPath: string;
   toolCtx: ToolContext;
@@ -56,11 +95,12 @@ export interface AiSession {
 }
 
 /**
- * Loads the model, opens one context shared by the narrative session and
- * rules/'s validation session (separate sequences, so neither shares chat
- * history with the other), and wires up the beta tool set. Tier 1 per
- * docs/ARCHITECTURE.md's AI Orchestration: one model handles narrative,
- * tool-call decisions, and rule validation in sequence.
+ * Loads the model, opens one context shared by the narrative session,
+ * rules/'s validation session, and audit/'s narration-consistency session
+ * (separate sequences, so none shares chat history with the others), and
+ * wires up the beta tool set. Tier 1 per docs/ARCHITECTURE.md's AI
+ * Orchestration: one model handles narrative, tool-call decisions, rule
+ * validation, and narration auditing in sequence.
  */
 export async function createAiSession(options: AiSessionOptions): Promise<AiSession> {
   const llama = await getLlama();
@@ -69,11 +109,15 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
   const narrativeSequence = context.getSequence();
   const rulesSequence = context.getSequence();
+  const auditSequence = context.getSequence();
   const ruleValidator = new RuleValidator(llama, rulesSequence);
+  const narrationAuditor = new NarrationAuditor(llama, auditSequence);
 
   const turn = { timestamp: 0 };
+  let turnToolCalls: ToolCallRecord[] = [];
 
   function record<Params, Result>(name: string, params: Params, result: Result): Result {
+    turnToolCalls.push({ name, params, result });
     options.onToolCall?.({ name, params, result });
     return result;
   }
@@ -246,7 +290,52 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
   return {
     async prompt(input, turnTimestamp) {
       turn.timestamp = turnTimestamp;
-      return session.prompt(input, { functions });
+      turnToolCalls = [];
+
+      let narration = await session.prompt(input, { functions });
+
+      const actionCalls = turnToolCalls.filter((call) => call.name === "action");
+      let auditResult = { consistent: true } as Awaited<ReturnType<NarrationAuditor["audit"]>>;
+      let retries = 0;
+
+      // Only check turns where `action` was called — say/note_hazard/check
+      // tools have no mechanical outcome a narration could contradict.
+      if (actionCalls.length > 0) {
+        auditResult = await narrationAuditor.audit(narration, turnToolCalls);
+
+        while (!auditResult.consistent && retries < MAX_NARRATION_RETRIES) {
+          retries += 1;
+          const correction = [
+            `Your narration didn't match what actually happened: ${auditResult.contradiction}`,
+            `The actual tool results this turn: ${JSON.stringify(turnToolCalls)}`,
+            "Rewrite your narration to accurately reflect this.",
+          ].join("\n");
+          // No `functions` here — this must not re-trigger tool calls and
+          // re-apply state a second time, only regenerate the description.
+          narration = await session.prompt(correction);
+          auditResult = await narrationAuditor.audit(narration, turnToolCalls);
+        }
+
+        if (!auditResult.consistent) {
+          narration = buildFallbackNarration(actionCalls);
+        }
+      }
+
+      options.toolCtx.dtm.append({
+        experienceId: options.toolCtx.loaded.experience.id,
+        timestamp: turnTimestamp,
+        type: "turn.audited",
+        payload: {
+          narration,
+          toolCalls: turnToolCalls,
+          checked: actionCalls.length > 0,
+          consistent: auditResult.consistent,
+          retries,
+          usedFallback: actionCalls.length > 0 && !auditResult.consistent,
+        },
+      });
+
+      return narration;
     },
     async dispose() {
       session.dispose();

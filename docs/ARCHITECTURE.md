@@ -230,7 +230,7 @@ an event-sourcing pattern — DTM is the single source of truth.
   | `id` | INTEGER PK | autoincrement, ordering tiebreaker |
   | `experience_id` | TEXT | scopes events to a single Experience/playthrough |
   | `timestamp` | INTEGER | in-game/engine time, not wall clock |
-  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"`, `"hazard.noted"` |
+  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"`, `"hazard.noted"`, `"turn.audited"` |
   | `entity_id` | TEXT, nullable | character/NPC/item the event concerns, if any |
   | `node_id` | TEXT, nullable | node the event occurred at, if applicable |
   | `position_x` / `position_y` | INTEGER, nullable | for entity/item position-update events |
@@ -306,6 +306,15 @@ or mechanical action, similar to how Claude Code inspects before acting.
 6. If valid: `core/` applies the action, the change is written to `dtm/`, and
    `state/` reflects it as a derived view.
 7. If invalid: the AI is told why, and must adjust its response.
+   - **Beta addition:** state correctness (steps 4–7) is a closed
+     guarantee — the AI cannot make `dtm/` say anything but the truth. What
+     it *narrates* about that truth is a separate concern, since generated
+     prose isn't grammar-constrained the way tool calls are. Beta adds an
+     `audit/` step after narration is produced: a `NarrationAuditor` checks
+     the narration against the turn's actual tool results, and on a
+     detected contradiction, `ai/` reprompts for a corrected version
+     (bounded retries) before falling back to a deterministic, tool-
+     result-only sentence. See `audit/`/`ai/` in Beta Implementation.
 
 This keeps the engine as the authority over every change — the AI cannot alter
 game state directly, only propose actions through `tools/`.
@@ -578,10 +587,24 @@ design above for beta scope.
   back to player input, not engine fact, so the model is told to judge
   plausibility strictly against `state`, never against what the
   description itself asserts.
+- **`audit/`** (`src/audit/index.ts`) — `NarrationAuditor` implements the
+  same "separate validation prompt" pattern as `rules/`: its own
+  `LlamaChatSession` on a dedicated `LlamaContextSequence`, chat history
+  reset every call. Given a turn's narration text and the exact tool calls
+  (with results) made that turn, it decides `{consistent: boolean,
+  contradiction?: string}` — a grammar-forced fact-check of whether the
+  narration accurately reflects what actually happened (success vs.
+  failure, the real outcome, specific facts like which node a move
+  landed at), explicitly not a writing-quality judgment. Kept isolated
+  from the narrative session for the same reason `rules/` is: the
+  reasoning that produced the narration shouldn't also be the reasoning
+  that grades it. See `ai/` below for how its verdict drives
+  retry-then-fallback.
 - **`ai/`** (`src/ai/index.ts`) — `createAiSession(...)` loads the model,
-  opens one `LlamaContext`, and draws two sequences from it: one for the
-  narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`. Declares
-  the three check tools, `say`, and the unified `action` tool via
+  opens one `LlamaContext`, and draws three sequences from it: one for the
+  narrative `LlamaChatSession`, one for `rules/`'s `RuleValidator`, one for
+  `audit/`'s `NarrationAuditor` (below). Declares the three check tools,
+  `say`, `note_hazard`, and the unified `action` tool via
   `defineChatSessionFunction` (the `action` tool's params use a GBNF
   `oneOf`/`const` schema to express the `move`/`use_technique`/`interact`
   discriminated union) and drives the agentic loop through
@@ -592,7 +615,33 @@ design above for beta scope.
   first rejection from either stage. Each tool handler is wrapped by a
   `record()` helper that invokes an optional `onToolCall?: (call) => void`
   callback — this is how `io/`'s debug-dump mode observes tool calls
-  without `ai/` depending on `io/`.
+  without `ai/` depending on `io/` — and also pushes into an internal
+  `turnToolCalls` array reset at the start of each `prompt()` call, used by
+  the narration-consistency step below.
+  After `session.prompt()` returns a turn's narration, if that turn
+  included an `action` call, `prompt()` runs `audit/`'s `NarrationAuditor`
+  against the narration and `turnToolCalls`. On `{consistent: false}`, it
+  reprompts the *same* narrative session with the contradiction named,
+  deliberately **without** `{functions}` — so the retry can only regenerate
+  text, never re-trigger tool calls and re-apply state a second time — up
+  to `MAX_NARRATION_RETRIES` (2) times. If still inconsistent, it falls
+  back to `buildFallbackNarration`: a deterministic, model-free sentence
+  built directly from the `action` call's own params/result (e.g. `"goku
+  moves to \"drifting-wreckage\"."`, or the rejection's `reason` verbatim
+  on failure) — a hard guarantee the player is never shown narration
+  *confirmed* to contradict what actually happened, at the cost of losing
+  narrative flourish for that turn. Every turn (checked or not) appends a
+  `turn.audited` dtm event — `{narration, toolCalls, checked, consistent,
+  retries, usedFallback}` — persisting the full narration text, since
+  `LlamaChatSession`'s chat history is in-memory only and would otherwise
+  be lost once the session ends; this is the first durable record of what
+  the AI actually said, not just what it did.
+  This addresses the "narration can drift from actual state" gap: state
+  itself was already guaranteed correct (only `tools/` can write `dtm`),
+  but until this, nothing checked whether the *prose describing it* was
+  accurate. The regeneration prompt does become a visible turn in the
+  narrative session's chat history (no way to retroactively edit history
+  through the current API), which is an accepted cost of this design.
 - **`core/`** (`src/core/index.ts`) — `createEngine(options)` assembles a
   playable Experience: loads data, opens `dtm/`, starts the `ai/` session,
   and exposes `takeTurn(input)`, which increments a per-turn timestamp
@@ -696,7 +745,15 @@ environmental codes (not part of the checked-in fixture): one with an
 (confirmed via the resulting `effectiveStats` change), the other with an
 unmatched `effectId` produced no mechanical effect at all (the null
 fallback), and `note_hazard` successfully logged a `hazard.noted` event
-for the unresolved one.
+for the unresolved one. Also verified `ai/`'s `buildFallbackNarration`
+directly against real `applyAction`/`rejectAction` results for every
+action type and outcome (valid move, neutral technique, valid interact,
+a capability-gate rejection), confirming each produces an accurate,
+tool-result-only sentence, and confirmed the `turn.audited` dtm event
+persists the full expected shape. `audit/`'s `NarrationAuditor` itself —
+like `rules/`'s `RuleValidator` — has not been exercised against a real
+loaded model in this environment; only the deterministic code around it
+(what triggers the check, what happens on failure) is verified.
 
 ### Beta Preparation
 
