@@ -122,25 +122,39 @@ nodes** (the actual visitable locations). Schema defined in
 
 #### Ruleset Declaration & Fallback
 
-An Experience can declare its own ability/skill *definitions* (id + name,
-and for skills, an optional `governingAbilityId`) — this is the ruleset
-template a character's abilities/skills draw their ids from, distinct from
-a character's own stored scores/values.
+An Experience can declare its own ability/skill/effect *definitions* (id +
+name, and for skills, an optional `governingAbilityId`; for effects, a
+`severity` and stat deltas — see **Escalation Effects** below) — this is the
+ruleset template a character's abilities/skills draw their ids from, and the
+pool `tools/`'s escalation system draws debuffs from, distinct from a
+character's own stored scores/values.
 
 - Schema: `ExperienceSchema` in `src/data/schemas/experience.ts` (Zod),
-  currently scoped to just `abilities`/`skills` declarations — the full
+  currently scoped to `abilities`/`skills`/`effects` declarations — the full
   Experience model (world, characters, rulesets, mode) is deferred.
 - Resolution is **per-entry fallback**, in `src/data/loaders/character.ts`:
-  each declared ability/skill entry is validated individually; an invalid
-  or duplicate-id entry is dropped rather than failing the whole list. Any
-  default id (`DEFAULT_ABILITIES` / `DEFAULT_SKILLS`) missing from the
-  resolved set is filled in from the default. A skill entry whose
-  `governingAbilityId` doesn't match any resolved ability id is also
-  treated as broken and dropped.
+  each declared ability/skill/effect entry is validated individually; an
+  invalid or duplicate-id entry is dropped rather than failing the whole
+  list. Any default id (`DEFAULT_ABILITIES` / `DEFAULT_SKILLS` /
+  `DEFAULT_EFFECTS`) missing from the resolved set is filled in from the
+  default. A skill entry whose `governingAbilityId` doesn't match any
+  resolved ability id is also treated as broken and dropped (effects have
+  no such cross-reference to check).
 - This keeps the ruleset truly data-driven (an Experience can fully
-  override or extend the D&D baseline) while guaranteeing a usable,
-  internally-consistent result even if part of the declared data is
-  malformed.
+  override or extend the D&D baseline, and the default effect pool) while
+  guaranteeing a usable, internally-consistent result even if part of the
+  declared data is malformed.
+
+##### Escalation Effects
+
+`EffectDefSchema` (`src/data/schemas/character.ts`) is the ruleset-level
+definition for a mechanical debuff: `{id, name, description, severity (1-5,
+same scale as `EnvironmentalCode`), armorClassDelta?, maxHitPointsDelta?}`.
+`DEFAULT_EFFECTS` provides three fallback entries (`exposed`/severity 1,
+`weakened`/severity 2, `battered`/severity 3). `severity` isn't just
+descriptive — it gates which effects `tools/`'s `rejectAction` is allowed to
+draw from as a character's strike count rises (see Beta Implementation
+below).
 
 ### Narrative / Plot Points
 
@@ -361,15 +375,13 @@ design above for beta scope.
 - **`state/`** (`src/state/index.ts`) — `getState(dtm, loaded, currentTurn)`
   returns a `StateSnapshot`: every character's sheet, current `nodeId`
   (derived from `dtm.lastPosition`, falling back to the Experience's
-  declared `startingNodeId`), and `activeDebuffs` — non-expired mechanical
-  debuffs derived from `debuff.applied` dtm events, filtered by
-  `expiresAtTurn > currentTurn`. Confirms the "state is a derived view,
-  never independently stored" principle above. Also exports `DEBUFF_POOL`,
-  a fixed set of engine-level debuff templates (`exposed`: -2 armor class,
-  `weakened`: -5 max HP, `battered`: both) used by `tools/`'s escalation
-  mechanism — deliberately restricted to `armorClass`/`hitPoints.max`,
-  the only numeric combat fields every `CharacterSheet` is guaranteed to
-  have, since abilities/skills are Experience-defined with arbitrary ids.
+  declared `startingNodeId`), and `activeDebuffs` — non-expired
+  `AppliedDebuff`s (an `EffectDef` plus `appliedAtTurn`/`expiresAtTurn`)
+  derived from `debuff.applied` dtm events, filtered by `expiresAtTurn >
+  currentTurn`. Confirms the "state is a derived view, never independently
+  stored" principle above. The effect pool itself now lives in
+  `loaded.ruleset.effects` (Experience-resolved, see Ruleset Declaration &
+  Fallback above) rather than as a `state/`-owned constant.
 - **`scope/`** (`src/scope/index.ts`) — `getScope(world, state, characterId)`
   returns a character's current node (merged environmental codes per the
   node-overrides-region rule above, and connections with **computed**
@@ -432,11 +444,19 @@ design above for beta scope.
       judges an action `"invalid"`. Appends an `action.rejected` dtm
       event, then counts that character's total rejections; once the
       count reaches `STRIKE_THRESHOLD` (3), this and every further
-      rejection also appends a `debuff.applied` event — a random template
-      from `state/`'s `DEBUFF_POOL`, expiring `DEBUFF_DURATION_TURNS` (5)
-      turns later. This is deterministic bookkeeping, not a model
-      judgment call — it fires the same way whether the rejection came
-      from the hard capability gate or `rules/`'s situational judgment.
+      rejection also appends a `debuff.applied` event, expiring
+      `DEBUFF_DURATION_TURNS` (5) turns later. The specific effect is
+      drawn at random from `ctx.loaded.ruleset.effects` (the Experience's
+      resolved effect pool — see Escalation Effects above), but only from
+      effects whose `severity` is at or below an eligible ceiling that
+      rises by 1 with each strike past the threshold (capped at
+      `MAX_SEVERITY`, 5): strike 3 can only draw severity 1, strike 4
+      severity ≤2, and so on — `pickEffect` falls back to the pool's
+      lowest-severity entries if none qualify (e.g. a custom pool with no
+      severity-1 entries), so escalation never has zero eligible effects.
+      This is deterministic bookkeeping, not a model judgment call — it
+      fires the same way whether the rejection came from the hard
+      capability gate or `rules/`'s situational judgment.
     Both `applyAction`/`rejectAction` return `{success: false, reason}`
     shapes rather than throwing on a rejected action.
 - **`rules/`** (`src/rules/index.ts`) — `RuleValidator` implements the
@@ -500,7 +520,8 @@ design above for beta scope.
 and Venom (D&D-range stats, 10–20) placed in Ben 10's Null Void dimension —
 one `open`-type region (`null-void-expanse`) with two connected nodes
 (`battlefield-core`, `drifting-wreckage`). The Experience declares no custom
-abilities/skills, exercising the default-ruleset fallback path. Each
+abilities/skills/effects, exercising the default-ruleset fallback path
+(including `DEFAULT_EFFECTS` for escalation). Each
 character's sheet also declares two `techniques` (Goku: `kamehameha`,
 `instant-transmission`; Venom: `symbiote-tendrils`, `venom-bite`) to exercise
 the `use_technique` capability gate. Verified via ad hoc scripts (not a
@@ -514,10 +535,14 @@ sheet lists succeeds, and a technique not on the sheet (e.g. Goku attempting
 `hakai`) is rejected by the capability gate before any model call. Also
 verified the escalation path directly against `tools/`'s `rejectAction`:
 repeating a rejected `hakai` attempt across turns produces narrative-only
-rejections on strikes 1–2, a random `debuff.applied` event on strike 3
-(and a further one on strike 4, stacking), and `getState`'s
-`activeDebuffs` correctly drops each debuff once its `expiresAtTurn` has
-passed.
+rejections on strikes 1–2, a severity-1-only `debuff.applied` event on
+strike 3, a severity-≤2-eligible one on strike 4 (and so on, stacking),
+and `getState`'s `activeDebuffs` correctly drops each debuff once its
+`expiresAtTurn` has passed. Also verified `resolveEffectDefs`'s per-entry
+fallback: a custom Experience-declared effect list can override a default
+id (e.g. redefine `exposed`), add new higher-severity effects, and still
+falls back to any default id it didn't touch (e.g. `weakened`,
+`battered`).
 
 ---
 
@@ -564,7 +589,8 @@ passed.
   describe using an item, but `CharacterSheet` has no concept of carried
   items, so nothing structurally grounds "does this character actually
   have that item."
-- **Escalation constants are hardcoded, not Experience-authored** —
-  `STRIKE_THRESHOLD` (3), `DEBUFF_DURATION_TURNS` (5), and `DEBUFF_POOL`
-  itself live as engine constants in `state/`/`tools/`, not as
-  Experience-configurable data.
+- **Escalation constants are still hardcoded** — the effect pool itself is
+  now Experience-authorable (`EffectDefSchema`/`DEFAULT_EFFECTS`, see
+  Escalation Effects above), but `STRIKE_THRESHOLD` (3), `MAX_SEVERITY`
+  (5), and `DEBUFF_DURATION_TURNS` (5) are still engine constants in
+  `tools/index.ts`, not per-Experience data.

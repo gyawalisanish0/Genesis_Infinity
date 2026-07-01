@@ -1,10 +1,13 @@
 import {
   AbilityDefSchema,
   SkillDefSchema,
+  EffectDefSchema,
   DEFAULT_ABILITIES,
   DEFAULT_SKILLS,
+  DEFAULT_EFFECTS,
   type AbilityDef,
   type SkillDef,
+  type EffectDef,
 } from "../schemas/character.js";
 
 /**
@@ -68,14 +71,40 @@ export function resolveSkillDefs(
 }
 
 /**
- * Resolves both ability and skill definitions for an Experience in one
+ * Resolves an Experience's declared effect list the same way as
+ * resolveAbilityDefs — per-entry fallback, no cross-reference check needed
+ * (effects don't reference abilities the way skills do).
+ */
+export function resolveEffectDefs(declared: unknown[] | undefined): EffectDef[] {
+  const resolved = new Map<string, EffectDef>();
+
+  for (const entry of declared ?? []) {
+    const result = EffectDefSchema.safeParse(entry);
+    if (result.success && !resolved.has(result.data.id)) {
+      resolved.set(result.data.id, result.data);
+    }
+  }
+
+  for (const fallback of DEFAULT_EFFECTS) {
+    if (!resolved.has(fallback.id)) {
+      resolved.set(fallback.id, fallback);
+    }
+  }
+
+  return Array.from(resolved.values());
+}
+
+/**
+ * Resolves ability, skill, and effect definitions for an Experience in one
  * call, since skill resolution depends on the resolved ability set.
  */
 export function resolveRulesetDefs(experience: {
   abilities?: unknown[];
   skills?: unknown[];
-}): { abilities: AbilityDef[]; skills: SkillDef[] } {
+  effects?: unknown[];
+}): { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[] } {
   const abilities = resolveAbilityDefs(experience.abilities);
   const skills = resolveSkillDefs(experience.skills, abilities);
-  return { abilities, skills };
+  const effects = resolveEffectDefs(experience.effects);
+  return { abilities, skills, effects };
 }

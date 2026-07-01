@@ -109,6 +109,58 @@ export const TechniqueDefSchema = z.object({
 export type TechniqueDef = z.infer<typeof TechniqueDefSchema>;
 
 /**
+ * A mechanical debuff/effect definition an Experience can declare — the
+ * ruleset-level pool tools/'s escalation system (rejectAction) draws from
+ * as punishment for a character's repeated invalid action attempts.
+ * `severity` (1-5, same scale as world.ts's EnvironmentalCode) gates which
+ * effects are eligible to be picked at a given strike count: escalation
+ * only allows drawing from severities up to a ceiling that rises with the
+ * strike count, so punishment trends harsher the longer it's ignored
+ * without being fully deterministic. Deltas are restricted to
+ * armorClass/hitPoints.max — the only numeric combat fields every
+ * CharacterSheet is guaranteed to have.
+ */
+export const EffectDefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  severity: z.number().int().min(1).max(5),
+  armorClassDelta: z.number().int().optional(),
+  maxHitPointsDelta: z.number().int().optional(),
+});
+export type EffectDef = z.infer<typeof EffectDefSchema>;
+
+/**
+ * Fallback effect pool for Experiences that don't declare their own —
+ * resolved the same "per-entry fallback" way as DEFAULT_ABILITIES/
+ * DEFAULT_SKILLS (see data/loaders/character.ts's resolveEffectDefs).
+ */
+export const DEFAULT_EFFECTS: EffectDef[] = [
+  {
+    id: "exposed",
+    name: "Exposed",
+    description: "A conspicuous opening in their guard from the failed attempt.",
+    severity: 1,
+    armorClassDelta: -2,
+  },
+  {
+    id: "weakened",
+    name: "Weakened",
+    description: "The failed attempt saps their stamina.",
+    severity: 2,
+    maxHitPointsDelta: -5,
+  },
+  {
+    id: "battered",
+    name: "Battered",
+    description: "Repeated failure leaves them off-balance and worn down.",
+    severity: 3,
+    armorClassDelta: -1,
+    maxHitPointsDelta: -3,
+  },
+];
+
+/**
  * The mechanical layer of a character — stats and skills used by rules/
  * for checks. Identity fields (class/race/background) are open strings,
  * not fixed enums, so non-fantasy settings aren't forced into D&D content.

@@ -1,8 +1,8 @@
 import type { Dtm, DtmEvent } from "../dtm/index.js";
 import type { World } from "../data/schemas/world.js";
 import type { LoadedExperience } from "../data/loaders/experience.js";
-import type { CharacterSheet } from "../data/schemas/character.js";
-import { getState, DEBUFF_POOL, type AppliedDebuff } from "../state/index.js";
+import type { CharacterSheet, EffectDef } from "../data/schemas/character.js";
+import { getState, type AppliedDebuff } from "../state/index.js";
 import { getScope, findNode, type Scope } from "../scope/index.js";
 
 /** Outcome of an action, as decided by rules/ (see rules/index.ts). */
@@ -12,6 +12,8 @@ export type ActionOutcome = "valid" | "neutral";
 const STRIKE_THRESHOLD = 3;
 /** How many turns a punishment debuff remains active once applied. */
 const DEBUFF_DURATION_TURNS = 5;
+/** Ceiling on how high the eligible severity can climb, regardless of strike count. */
+const MAX_SEVERITY = 5;
 
 /**
  * Everything a tool handler needs to read engine state. Bound once per
@@ -251,11 +253,26 @@ function applyInteract(
 }
 
 /**
+ * Picks a random effect from the Experience's resolved effect pool, limited
+ * to severities at or below `ceiling`. Falls back to the pool's lowest-
+ * severity effect(s) if nothing qualifies (e.g. a custom pool with no
+ * severity-1 entries) so escalation never has zero eligible effects.
+ */
+function pickEffect(effects: EffectDef[], ceiling: number): EffectDef {
+  const eligible = effects.filter((effect) => effect.severity <= ceiling);
+  const pool = eligible.length > 0 ? eligible : effects;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/**
  * Records a rejected action attempt — from checkAction's hard capability
  * gate, or rules/'s "invalid" judgment — and escalates: once a character
  * accrues STRIKE_THRESHOLD rejections, this and every further rejection
- * also applies a random mechanical debuff drawn from state/'s fixed
- * DEBUFF_POOL, expiring DEBUFF_DURATION_TURNS turns later. This is
+ * also applies a random effect drawn from the Experience's resolved effect
+ * pool (`ctx.loaded.ruleset.effects`), expiring DEBUFF_DURATION_TURNS turns
+ * later. The eligible severity ceiling rises by 1 with each strike past the
+ * threshold (capped at MAX_SEVERITY), so punishment trends harsher the
+ * longer it's ignored without being fully deterministic. This is
  * deterministic bookkeeping, not a model judgment call.
  */
 export function rejectAction(
@@ -281,7 +298,8 @@ export function rejectAction(
     return { success: false, reason, strikeCount };
   }
 
-  const template = DEBUFF_POOL[Math.floor(Math.random() * DEBUFF_POOL.length)];
+  const severityCeiling = Math.min(MAX_SEVERITY, strikeCount - STRIKE_THRESHOLD + 1);
+  const template = pickEffect(ctx.loaded.ruleset.effects, severityCeiling);
   const debuffApplied: AppliedDebuff = {
     ...template,
     appliedAtTurn: turnTimestamp,

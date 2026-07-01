@@ -4,11 +4,11 @@ import { ExperienceSchema, type Experience } from "../schemas/experience.js";
 import { WorldSchema, type World } from "../schemas/world.js";
 import { CharacterSheetSchema, type CharacterSheet } from "../schemas/character.js";
 import { resolveRulesetDefs } from "./character.js";
-import type { AbilityDef, SkillDef } from "../schemas/character.js";
+import type { AbilityDef, SkillDef, EffectDef } from "../schemas/character.js";
 
 export interface LoadedExperience {
   experience: Experience;
-  ruleset: { abilities: AbilityDef[]; skills: SkillDef[] };
+  ruleset: { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[] };
   world: World;
   characters: CharacterSheet[];
 }
@@ -23,7 +23,7 @@ async function readJson(path: string): Promise<unknown> {
  *   <dir>/world.json        (WorldSchema)
  *   <dir>/characters/*.json (CharacterSheetSchema, one per file)
  *
- * Ruleset abilities/skills are resolved against the D&D defaults via
+ * Ruleset abilities/skills/effects are resolved against the defaults via
  * resolveRulesetDefs (per-entry fallback) before being returned.
  */
 export async function loadExperience(dir: string): Promise<LoadedExperience> {
