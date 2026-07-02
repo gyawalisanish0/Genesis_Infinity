@@ -1,6 +1,32 @@
 {
   "id": "goku-vs-venom-null-void",
   "name": "Goku vs Venom: Null Void Showdown",
+  "effects": [
+    {
+      "id": "disoriented",
+      "name": "Disoriented",
+      "description": "Thrown off balance by a sudden gravity flicker.",
+      "severity": 2,
+      "armorClassDelta": -1
+    }
+  ],
+  "items": [
+    {
+      "id": "senzu-bean",
+      "name": "Senzu Bean",
+      "description": "A single bean that undoes exhaustion and closes wounds almost instantly.",
+      "type": "consumable",
+      "healAmount": 50
+    },
+    {
+      "id": "salvaged-plating",
+      "name": "Salvaged Plating",
+      "description": "Hull plating torn from the wreckage field and bound to the body with symbiote mass.",
+      "type": "equipment",
+      "armorClassDelta": 1,
+      "maxHitPointsDelta": 10
+    }
+  ],
   "characters": [
     { "characterId": "goku", "startingNodeId": "battlefield-core" },
     { "characterId": "venom", "startingNodeId": "drifting-wreckage" }

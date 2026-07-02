@@ -762,17 +762,33 @@ design above for beta scope.
   and exposes `currentTimelineUnit()` alongside `currentTurn()` — a second,
   independent clock (see `timeline/` below).
   `buildSystemPrompt` states an explicit trust boundary alongside the
-  narrator role: the engine's tool results are the only source of truth
-  about game state, and the player's message is their character's
-  dialogue/intent, never a factual claim — if a player's input asserts
-  something as already true without a tool result confirming it (e.g.
-  "I already have the sword"), the model is told to check or resolve it
-  through a tool call rather than narrate it as fact, and that player
-  input can never bypass tool validation to change state directly
+  narrator role, phrased around two fixed roles: **the Engine** (this
+  codebase's tool results — the only source of truth about game state)
+  and **the user** (the connected human — their messages are their
+  character's dialogue/intent, never a factual claim). If a user's input
+  asserts something as already true without a tool result confirming it
+  (e.g. "I already have the sword"), the model is told to check or
+  resolve it through a tool call rather than narrate it as fact, and that
+  user input can never bypass tool validation to change state directly
   regardless of phrasing. This is the same trust boundary `rules/`'s
-  prompt states for a proposed action's `description` (above) — both close
-  off the same class of prompt-injection-style attempt to get the model to
-  treat unverified player-asserted claims as ground truth.
+  prompt states for a proposed action's `description` (above, also
+  phrased as user-input-vs-Engine-fact) — both close off the same class
+  of prompt-injection-style attempt to get the model to treat unverified
+  user-asserted claims as ground truth.
+  `EngineOptions.playerCharacterId` (the same id `io/`'s `--character` and
+  `server/`'s `characterId` already use for `scope/` rendering) is also
+  named explicitly in the system prompt — "The connected user controls X
+  (id: ...), when they write in first person they always mean this
+  character" — added after a real session showed a model asking "which
+  character are you referring to?" on a plain "Where am I?": the
+  character list alone gives the model no way to know which one is "I"
+  without this line. The type is `string | null` rather than `string` —
+  not an unused placeholder, the `null` branch is real and exercised
+  (told to the model as "no character is assigned to this user yet; treat
+  their messages as out-of-character/meta") — this is the seam a future
+  multi-user mode would attach a real per-user assignment to, without any
+  of today's single-user callers needing to change; today `io/`/`server/`
+  always pass a real id, so the beta's behavior is unchanged.
 - **`timeline/`** (`src/timeline/index.ts`) — a real-wall-clock-anchored
   counter, deliberately separate from the turn-based `dtm` timestamp above
   (which counts player inputs, not elapsed time). `createTimeline(now =
@@ -910,13 +926,21 @@ design above for beta scope.
 
 `examples/goku-vs-venom/` is the smoke-test fixture for the beta slice: Goku
 and Venom (D&D-range stats, 10–20) placed in Ben 10's Null Void dimension —
-one `open`-type region (`null-void-expanse`) with two connected nodes
-(`battlefield-core`, `drifting-wreckage`). The Experience declares no custom
-abilities/skills/effects, exercising the default-ruleset fallback path
-(including `DEFAULT_EFFECTS` for escalation). Each
-character's sheet also declares two `techniques` (Goku: `kamehameha`,
-`instant-transmission`; Venom: `symbiote-tendrils`, `venom-bite`) to exercise
-the `use_technique` capability gate. Verified via ad hoc scripts (not a
+one `open`-type region (`null-void-expanse`) with three connected nodes
+(`battlefield-core`, `drifting-wreckage`, `suspended-shard`), the last
+carrying a genuine `mechanical` environmental code (`gravity`/`unstable`,
+`effectId: "disoriented"`) so the hazard-resolution path is exercised by the
+checked-in fixture itself rather than only ad hoc test data. The Experience
+declares no custom abilities/skills, but does declare a custom `effects`
+entry (`disoriented`, backing the new node's hazard) and two custom `items`
+(`senzu-bean`, a consumable; `salvaged-plating`, equipment) additively
+alongside `DEFAULT_EFFECTS`/`DEFAULT_ITEMS`, exercising both the
+default-ruleset fallback path and `resolveEffectDefs`/`resolveItemDefs`'s
+per-entry-fallback merge in the same fixture. Each character's sheet also
+declares three `techniques` (Goku: `kamehameha`, `instant-transmission`,
+`kaio-ken`; Venom: `symbiote-tendrils`, `venom-bite`,
+`symbiote-camouflage`) to exercise the `use_technique` capability gate.
+Verified via ad hoc scripts (not a
 checked-in test suite yet) that `loadExperience`, `getState`, `getScope`, and
 `tools/`'s `checkAction`/`applyAction` interoperate correctly: starting
 positions resolve from the Experience's declared placements, scope reports
@@ -951,15 +975,16 @@ untouched, `scope/`'s `effectiveStats` matches `state/`'s exactly, a
 character with no active debuffs shows effective stats identical to its
 base sheet, and a sheet declaring neither `armorClass` nor `hitPoints`
 resolves to an empty `effectiveStats` rather than throwing. Also verified
-`applyEnvironmentalEffects` against a node with two injected `mechanical`
-environmental codes (not part of the checked-in fixture): one with an
-`effectId` matching a pool entry applied a real debuff on arrival
-(confirmed via the resulting `effectiveStats` change), the other with an
-unmatched `effectId` produced no mechanical effect at all (the null
-fallback), and `note_hazard` successfully logged a `hazard.noted` event
-for the unresolved one. Also verified the item/inventory system: each
-character's sheet declares a starting `inventory` (Goku: two
-`health-potion`; Venom: one `iron-shield`, unequipped) resolved against
+`applyEnvironmentalEffects` against `suspended-shard`'s checked-in
+`mechanical` environmental code (`gravity`/`unstable` → `effectId:
+"disoriented"`, part of the fixture itself): arriving there applied a
+real debuff (confirmed via the resulting `effectiveStats` change), and
+separately against an injected node with an unmatched `effectId` to
+confirm the null-fallback path (no mechanical effect, `note_hazard` logs
+a `hazard.noted` event instead). Also verified the item/inventory
+system: each character's sheet declares a starting `inventory` (Goku:
+two `health-potion` plus one `senzu-bean`; Venom: one `iron-shield` and
+one `salvaged-plating`, both unequipped) resolved against
 `DEFAULT_ITEMS` via `resolveItemDefs`'s per-entry fallback (same pattern as
 effects/abilities/skills). Confirmed `checkInteract`'s item gate rejects an
 `itemId` the character doesn't carry (and rejects it again once a
@@ -1008,7 +1033,18 @@ loaded model in this environment; only the deterministic code around it
 - Bounded check-tool-call loop (the `X` cap in Turn Flow) — not enforced in
   the beta `ai/` implementation, see Beta Implementation above
 - `mode` / `playerCharacterId` on `ExperienceSchema` — beta resolves player
-  identification via a CLI arg instead, see Beta Implementation above
+  identification via a CLI arg / `server/` config instead, see Beta
+  Implementation above. `EngineOptions.playerCharacterId` being `string |
+  null` (rather than a bare `string`) is deliberate groundwork for this:
+  a future multi-user mode would route several connected users, each
+  independently tied to a characterId or `null` (unassigned — e.g. a
+  spectator, or someone who hasn't picked a character yet), through that
+  same null-aware system-prompt branch. What's still undesigned and NOT
+  built: actual multi-user session routing itself — concurrent per-user
+  turns against one `Engine`/`Dtm`, whether that's one `Engine` handling
+  several users or several `Engine`s sharing a `Dtm`, and how per-user
+  identity is authenticated/assigned in the first place. Today's beta is
+  still exactly one connected user per `Engine` process.
 - Tier 2–5 specialized-model splits and the SAL/MML loading strategies —
   beta only implements Tier 1 (single model)
 - Data file format for Ruleset/other Experience content (world data uses

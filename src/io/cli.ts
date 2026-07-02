@@ -149,6 +149,7 @@ async function main(): Promise<void> {
     experienceDir: args.experienceDir,
     dbPath: args.dbPath,
     backend: args.backend,
+    playerCharacterId: args.characterId,
     onToolCall: args.debug ? (call) => toolCalls.push(call) : undefined,
   });
 
