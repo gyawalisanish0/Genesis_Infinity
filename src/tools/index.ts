@@ -189,17 +189,69 @@ function checkMove(
 }
 
 /**
+ * Applies an EffectDef to a target character, fanning out each declared
+ * delta to whichever mechanism matches its semantics (see EffectDefSchema's
+ * doc comment for why these are two different mechanisms, not one):
+ * - `armorClassDelta`/`maxHitPointsDelta` are *ongoing* — logged as a
+ *   `debuff.applied` event (state/'s AppliedDebuff), active only until
+ *   `escalation.debuffDurationUnits` timeline units pass.
+ * - `currentHitPointsDelta` is *permanent* — logged once as an
+ *   `effect.applied` event and accumulated forever by state/'s
+ *   computeEffectiveStats, the same way item-based healing already is.
+ * A single EffectDef can declare both kinds at once (e.g. a bite that
+ * deals immediate damage and leaves a lingering guard opening); each part
+ * is only applied if the effect actually declares it. Shared by
+ * applyEnvironmentalEffects (hazards) and applyUseTechnique (landed
+ * techniques) so both go through identical, deterministic mechanics.
+ */
+function applyEffect(
+  ctx: ToolContext,
+  effect: EffectDef,
+  targetCharacterId: string,
+  turnTimestamp: number,
+  source?: { characterId?: string; techniqueId?: string },
+): void {
+  if (effect.armorClassDelta !== undefined || effect.maxHitPointsDelta !== undefined) {
+    const appliedAtUnit = ctx.timeline.currentUnit();
+    const debuffApplied: AppliedDebuff = {
+      ...effect,
+      appliedAtUnit,
+      expiresAtUnit: appliedAtUnit + ctx.loaded.escalation.debuffDurationUnits,
+    };
+    ctx.dtm.append({
+      experienceId: ctx.loaded.experience.id,
+      timestamp: turnTimestamp,
+      type: "debuff.applied",
+      entityId: targetCharacterId,
+      payload: debuffApplied,
+    });
+  }
+
+  if (effect.currentHitPointsDelta !== undefined) {
+    ctx.dtm.append({
+      experienceId: ctx.loaded.experience.id,
+      timestamp: turnTimestamp,
+      type: "effect.applied",
+      entityId: targetCharacterId,
+      payload: {
+        effectId: effect.id,
+        currentHitPointsDelta: effect.currentHitPointsDelta,
+        sourceCharacterId: source?.characterId,
+        sourceTechniqueId: source?.techniqueId,
+      },
+    });
+  }
+}
+
+/**
  * Deterministically resolves and applies any mechanical environmental
  * effects at a node a character has just arrived at. Each mechanical
  * EnvironmentalCode's effectId is looked up in the Experience's resolved
- * effect pool — the same shared pool escalation draws from. A match
- * applies exactly like an escalation debuff: same `debuff.applied` event
- * shape, same `state/`'s `effectiveStats` machinery, timeline-based
- * duration (reusing `escalation.debuffDurationUnits`, since there's no
- * separate environmental-duration config yet). No match is a null
- * fallback — nothing mechanical happens; the AI may still choose to log a
- * one-off narrative note via `note_hazard` (see ai/index.ts). This is not
- * a model judgment call — no AI involvement in whether the effect applies.
+ * effect pool — the same shared pool escalation draws from. No match is a
+ * null fallback — nothing mechanical happens; the AI may still choose to
+ * log a one-off narrative note via `note_hazard` (see ai/index.ts). This
+ * is not a model judgment call — no AI involvement in whether the effect
+ * applies.
  */
 function applyEnvironmentalEffects(
   ctx: ToolContext,
@@ -220,19 +272,7 @@ function applyEnvironmentalEffects(
       continue; // null fallback: no matching effect definition, do nothing mechanically
     }
 
-    const appliedAtUnit = ctx.timeline.currentUnit();
-    const debuffApplied: AppliedDebuff = {
-      ...template,
-      appliedAtUnit,
-      expiresAtUnit: appliedAtUnit + ctx.loaded.escalation.debuffDurationUnits,
-    };
-    ctx.dtm.append({
-      experienceId: ctx.loaded.experience.id,
-      timestamp: turnTimestamp,
-      type: "debuff.applied",
-      entityId: characterId,
-      payload: debuffApplied,
-    });
+    applyEffect(ctx, template, characterId, turnTimestamp);
   }
 }
 
@@ -278,6 +318,40 @@ function checkUseTechnique(
   return { allowed: true };
 }
 
+/**
+ * If the technique has a pre-authored `effectId` (TechniqueDefSchema) and
+ * actually landed on someone (outcome "valid" - a full success, and a
+ * target was named), resolves it against the Experience's effect pool and
+ * applies it to the target via applyEffect. A "neutral" outcome (attempted
+ * but didn't fully land) or a technique with no `effectId` has no
+ * mechanical consequence yet - narration-only, same as before this existed.
+ */
+function applyTechniqueEffect(
+  ctx: ToolContext,
+  action: Extract<Action, { type: "use_technique" }>,
+  outcome: ActionOutcome,
+): void {
+  if (outcome !== "valid" || !action.targetId) {
+    return;
+  }
+
+  const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
+  const technique = actorSheet?.techniques.find((t) => t.id === action.techniqueId);
+  if (!technique?.effectId) {
+    return;
+  }
+
+  const effect = ctx.loaded.ruleset.effects.find((e) => e.id === technique.effectId);
+  if (!effect) {
+    return; // null fallback: no matching effect definition, do nothing mechanically
+  }
+
+  applyEffect(ctx, effect, action.targetId, action.timestamp, {
+    characterId: action.characterId,
+    techniqueId: action.techniqueId,
+  });
+}
+
 function applyUseTechnique(
   ctx: ToolContext,
   action: Extract<Action, { type: "use_technique" }>,
@@ -290,6 +364,7 @@ function applyUseTechnique(
     entityId: action.characterId,
     payload: { techniqueId: action.techniqueId, targetId: action.targetId, outcome },
   });
+  applyTechniqueEffect(ctx, action, outcome);
   return { success: true, techniqueId: action.techniqueId, outcome };
 }
 

@@ -115,12 +115,16 @@ nodes** (the actual visitable locations). Schema defined in
     governing ability id) provided as a template (`DEFAULT_SKILLS`), also
     overridable/extensible per Experience.
   - **Techniques** — named things a character actually knows how to do
-    (`TechniqueDefSchema`: `{id, name, description}`), declared per-character
-    with no ruleset-level template or default list (unlike abilities/skills,
-    which are Experience-wide). This is the hard capability gate for
-    `tools/`'s `use_technique` action: a character can only attempt a
-    technique on their own list — checked structurally, before the attempt
-    ever reaches `rules/` (see Beta Implementation below).
+    (`TechniqueDefSchema`: `{id, name, description, effectId?}`), declared
+    per-character with no ruleset-level template or default list (unlike
+    abilities/skills, which are Experience-wide). This is the hard
+    capability gate for `tools/`'s `use_technique` action: a character can
+    only attempt a technique on their own list — checked structurally,
+    before the attempt ever reaches `rules/` (see Beta Implementation
+    below). The optional `effectId` references the ruleset's effect pool
+    (see Escalation Effects below) — a technique's pre-authored mechanical
+    consequence on its target when it fully lands (see Effects &
+    Mechanical Grounding below).
   - **Inventory** — unlike techniques, items *are* Experience-wide (an
     `ItemDefSchema` catalog, like abilities/skills/effects), since items
     are usually generic — "Health Potion" means the same thing for every
@@ -183,13 +187,15 @@ on the `CharacterSheet` itself, not the Experience.
 ##### Escalation Effects
 
 `EffectDefSchema` (`src/data/schemas/character.ts`) is the ruleset-level
-definition for a mechanical debuff: `{id, name, description, severity (1-5,
-same scale as `EnvironmentalCode`), armorClassDelta?, maxHitPointsDelta?}`.
-`DEFAULT_EFFECTS` provides three fallback entries (`exposed`/severity 1,
-`weakened`/severity 2, `battered`/severity 3). `severity` isn't just
-descriptive — it gates which effects `tools/`'s `rejectAction` is allowed to
-draw from as a character's strike count rises (see Beta Implementation
-below).
+definition for a mechanical effect: `{id, name, description, severity (1-5,
+same scale as `EnvironmentalCode`), armorClassDelta?, maxHitPointsDelta?,
+currentHitPointsDelta?}`. `DEFAULT_EFFECTS` provides three fallback entries
+(`exposed`/severity 1, `weakened`/severity 2, `battered`/severity 3).
+`severity` isn't just descriptive — it gates which effects `tools/`'s
+`rejectAction` is allowed to draw from as a character's strike count rises
+(see Beta Implementation below). `currentHitPointsDelta` is the damage/heal
+primitive — see Effects & Mechanical Grounding below for why it's a
+different kind of delta from `armorClassDelta`/`maxHitPointsDelta`.
 
 ##### Item Catalog & Inventory
 
@@ -1010,6 +1016,154 @@ persists the full expected shape. `audit/`'s `NarrationAuditor` itself —
 like `rules/`'s `RuleValidator` — has not been exercised against a real
 loaded model in this environment; only the deterministic code around it
 (what triggers the check, what happens on failure) is verified.
+
+---
+
+## Effects & Mechanical Grounding
+
+An effect is a **modifier to a variable on whatever it's linked to** —
+a character's stats, a location's conditions, a whole region or world's
+rules, or the Experience's ruleset itself. Today only the character-linked
+case is built (debuffs, item deltas, and — as of this section — technique
+damage); location/world/experience-linked effects beyond the existing
+per-node/region `EnvironmentalCode` are still design, not code. This
+section records the full concept, then says explicitly what's actually
+built (Phase 1) versus deferred.
+
+### The concept
+
+**Scope hierarchy.** A character is placed at a node; nodes belong to a
+region; regions belong to a world; a world is used by an Experience. Effects
+can in principle attach at any of these levels — a personal buff on a
+character, a standing hazard on a location (already built, see
+Environmental Hazards below), a region/world-wide condition, or an
+Experience-wide rule that applies everywhere regardless of location. What's
+undesigned: the precedence/merge rule across all four levels at once (today
+only node-overrides-region exists, via `mergeEnvironmentalCodes`).
+
+**Effect type taxonomy.** Four kinds, distinguished by how long they last
+and whether they're triggered or continuously true:
+- **Temporary** — expires after a duration. Already built: `AppliedDebuff`,
+  timeline-unit-based (see Escalation Effects above and Environmental
+  Hazards below).
+- **Permanent** — applied once, never expires, accumulates forever. Already
+  built as of Phase 1 below (`currentHitPointsDelta`), and previously
+  existed in a narrower, hardcoded form as item healing.
+- **Static** — an unconditional, always-on trait baked into a definition,
+  no trigger needed. Partially built: equipped items' deltas work exactly
+  this way already (see Item Catalog & Inventory above), just not
+  generalized as a named "static effect" concept beyond items.
+- **Dynamic** — active only while some condition holds, recomputed fresh
+  every state read rather than triggered-once-and-decaying (e.g. a
+  modifier that applies only while standing at a specific node). **Not
+  built** — today's environmental hazards are actually *temporary*,
+  triggered once on arrival, not continuously re-evaluated against current
+  position.
+
+**AI-authored mechanics (the "write tool" question).** Everything built so
+far rests on one invariant: the AI proposes, but all mechanical numbers
+come from pre-authored data the engine validates against — the AI never
+invents a new rule live (see the Engine-vs-User Trust Boundary discussion
+in Beta Implementation above). Letting the AI define a *new* effect at
+runtime — for situations no author anticipated — breaks that invariant on
+purpose, so it needs its own guardrails, sketched as a graded authority
+ladder rather than an all-or-nothing switch:
+
+| Tier | Capability |
+|---|---|
+| 0 | Select an existing pre-authored effect (already built: escalation's pool, `note_hazard` for flavor-only notes) |
+| 1 | Tune a number within a bounded range on an existing effect template |
+| 2 | Define a brand-new `EffectDef` from scratch, still schema-validated and severity-capped |
+| 3 | Attach a newly-authored (or existing) effect to a location via a new `EnvironmentalCode` |
+| 4 | Generate a whole new `Node` (id, description, connections, hazards) |
+
+Key resolved design questions for whenever this is built:
+- **Magnitude is never AI-authored, even at tier 2+.** The AI proposes a
+  category (a severity tier 1-5, which stat it targets) — the same kind of
+  categorical judgment `rules/`'s tri-state validator already makes — and
+  the engine converts severity to an actual delta via a fixed formula it
+  owns (e.g. `armorClassDelta = -severity`). This is exactly how
+  escalation already separates "AI/validator judges category" from
+  "engine computes the number" (see Escalation Effects above); authoring
+  extends the same split rather than introducing a new one.
+- **Same validation path, no exceptions.** Whatever the AI authors, at any
+  tier, parses through the exact same Zod schemas Experience-authored JSON
+  already goes through — never a separate, looser path.
+- **Runtime-logged, not written back.** An AI-authored effect/node lives in
+  `dtm/`'s event log (permanent, replayable, part of that session's
+  history), never mutates the Experience's source JSON on disk — writing
+  back would blur "authored content" with "session history" and break if
+  two playthroughs of the same Experience diverge.
+- **Garbled/spam user input is not a special case.** The existing trust
+  boundary already covers it: user input is never a factual claim and
+  can't bypass validation, so nonsense input should simply fail to trigger
+  the authoring tool at all, the same way it fails to trigger any other
+  tool today. Schema validation and severity ceilings bound the blast
+  radius even if the AI misfires on bad input.
+
+None of tiers 1-4 are built. This is recorded here so the eventual
+implementation has the resolved design questions on hand rather than
+re-litigating them.
+
+### Phase 1 (built): the damage primitive
+
+The concrete gap that motivated this whole section: before this, a
+technique landing on a target (e.g. Venom's bite, Goku's Kamehameha) did
+**nothing** mechanically — `applyUseTechnique` only ever logged a
+`technique.used` dtm event. The narration could claim damage happened; the
+target's `effectiveStats.hitPoints` never actually changed, because no
+delta field existed for "reduce current HP directly" — only
+`maxHitPointsDelta` (shrinks the ceiling) and item-consumption healing
+existed, and neither is "damage."
+
+**What changed:**
+- `EffectDefSchema` gained `currentHitPointsDelta?: number` alongside the
+  existing `armorClassDelta`/`maxHitPointsDelta` — negative for damage,
+  positive for a direct heal-like effect. This is a *permanent* effect
+  field, not a *temporary* one like the other two: a hit doesn't heal
+  itself back once some other debuff it also caused expires, so it can't
+  go through `AppliedDebuff`'s timeline-expiry mechanism.
+- `TechniqueDefSchema` gained an optional `effectId?: string`, the same
+  pattern `EnvironmentalCode.effectId` already uses — a technique's
+  pre-authored mechanical consequence on its target.
+- `tools/`'s new `applyEffect` helper fans an `EffectDef` out to whichever
+  mechanism matches each declared field's semantics: `armorClassDelta`/
+  `maxHitPointsDelta` still go through the existing `debuff.applied`
+  event (ongoing, timeline-expiring); `currentHitPointsDelta` goes through
+  a new `effect.applied` event (permanent, no expiry). A single `EffectDef`
+  can declare both at once (e.g. immediate damage plus a lingering guard
+  opening) — each part only applies if the effect actually declares it.
+  `applyEnvironmentalEffects` (hazards) was refactored to call the same
+  helper, so hazards and landed techniques now share one mechanism instead
+  of hazards having their own copy of the debuff-applying logic.
+- `applyUseTechnique` resolves the acting character's technique's
+  `effectId` against `loaded.ruleset.effects` and applies it to
+  `action.targetId` — but only when the outcome is `"valid"` (a full
+  success) and a target was actually named. A `"neutral"` outcome (attempted
+  but didn't fully land) or a technique with no `effectId` still has no
+  mechanical consequence — narration-only, same as before this existed.
+- `state/`'s current-HP accumulator generalized from `totalHealingReceived`
+  (item consumption only) to also sum `totalEffectHitPointsDelta`
+  (`effect.applied` events) — heal and damage are now the same underlying
+  mechanism (a signed, permanent, accumulating current-HP contribution),
+  not two unrelated code paths. `computeEffectiveStats` now floors current
+  HP at 0, not just clamps it to the effective max — a floor that only
+  matters now that a negative contribution (damage) can push it down.
+- `examples/goku-vs-venom` demonstrates it: Goku's `kamehameha` deals 15
+  damage (`kamehameha-blast`, severity 4) and Venom's `venom-bite` deals 8
+  (`bite-wound`, severity 2).
+
+Verified directly against the real fixture: a valid Kamehameha reduces
+Venom's `effectiveStats.hitPoints.current` from 160 to 145; a valid
+Venom Bite reduces Goku's from 180 to 172; a `"neutral"` outcome leaves HP
+unchanged; and repeated hits floor current HP at 0 rather than going
+negative. `npm run typecheck` passes.
+
+**What Phase 1 deliberately doesn't do:** no AI-authored effects (that's
+tiers 1+ above), no `interact`-triggered damage for freeform attacks with
+no pre-declared technique, and reduced/partial damage on a `"neutral"`
+outcome (an attempt that "doesn't fully land" currently deals either full
+declared damage or none, not a partial amount).
 
 ---
 

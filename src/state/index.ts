@@ -139,19 +139,37 @@ function totalHealingReceived(dtm: Dtm, experienceId: string, characterId: strin
 }
 
 /**
+ * Net current-HP change from `effect.applied` events (tools/'s applyEffect)
+ * — a technique landing with an EffectDef's `currentHitPointsDelta`, e.g.
+ * a bite dealing damage. Negative for damage, positive for a direct
+ * heal-like effect. Snapshotted into the event payload at application time,
+ * same reasoning as `totalHealingReceived`. Permanent, like healing — a
+ * hit doesn't undo itself once whatever debuff it also caused expires.
+ */
+function totalEffectHitPointsDelta(dtm: Dtm, experienceId: string, characterId: string): number {
+  return dtm
+    .forEntity(experienceId, characterId)
+    .filter((event) => event.type === "effect.applied")
+    .reduce((sum, event) => sum + ((event.payload as { currentHitPointsDelta?: number }).currentHitPointsDelta ?? 0), 0);
+}
+
+/**
  * Applies active debuffs' and currently-equipped items' armorClassDelta/
- * maxHitPointsDelta to a sheet's base stats, plus any cumulative healing
- * received. This is an engine-computed fact, the same way scope/ computes
- * direction rather than leaving spatial reasoning to the model — rules/
- * shouldn't have to sum deltas out of activeDebuffs/inventory itself. Max
- * HP floors at 0; current HP is clamped to the effective max.
+ * maxHitPointsDelta to a sheet's base stats, plus any cumulative permanent
+ * current-HP change (item healing + effect.applied damage/heals - see
+ * totalHealingReceived/totalEffectHitPointsDelta). This is an
+ * engine-computed fact, the same way scope/ computes direction rather than
+ * leaving spatial reasoning to the model — rules/ shouldn't have to sum
+ * deltas out of activeDebuffs/inventory itself. Max HP floors at 0;
+ * current HP is clamped to [0, effective max] - a floor that only matters
+ * now that damage (a negative currentHitPointsDelta) can push it down.
  */
 function computeEffectiveStats(
   sheet: CharacterSheet,
   activeDebuffs: AppliedDebuff[],
   inventory: InventoryEntry[],
   items: ItemDef[],
-  healingReceived: number,
+  currentHitPointsDelta: number,
 ): EffectiveStats {
   const itemsById = new Map(items.map((item) => [item.id, item]));
   const equippedItems = inventory
@@ -171,7 +189,7 @@ function computeEffectiveStats(
   let hitPoints: HitPoints | undefined;
   if (sheet.hitPoints) {
     const max = Math.max(0, sheet.hitPoints.max + maxHitPointsDelta);
-    const current = Math.min(sheet.hitPoints.current + healingReceived, max);
+    const current = Math.max(0, Math.min(sheet.hitPoints.current + currentHitPointsDelta, max));
     hitPoints = { max, current };
   }
 
@@ -212,7 +230,9 @@ export function getState(
     const nodeId = currentNodeId(dtm, loaded.experience.id, sheet.id, startingNodeId);
     const activeDebuffs = activeDebuffsFor(dtm, loaded.experience.id, sheet.id, currentTimelineUnit);
     const inventory = currentInventory(dtm, loaded.experience.id, sheet.id, sheet.inventory);
-    const healingReceived = totalHealingReceived(dtm, loaded.experience.id, sheet.id);
+    const currentHitPointsDelta =
+      totalHealingReceived(dtm, loaded.experience.id, sheet.id) +
+      totalEffectHitPointsDelta(dtm, loaded.experience.id, sheet.id);
     const location = findNode(world, nodeId);
     return {
       sheet,
@@ -224,7 +244,7 @@ export function getState(
         activeDebuffs,
         inventory,
         loaded.ruleset.items,
-        healingReceived,
+        currentHitPointsDelta,
       ),
       environmentalCodes: mergeEnvironmentalCodes(location.region, location.node),
     };
