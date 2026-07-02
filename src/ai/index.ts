@@ -168,8 +168,6 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
     new Set(options.toolCtx.loaded.characters.flatMap((c) => c.techniques.map((t) => t.id))),
   );
   const itemIds = options.toolCtx.loaded.ruleset.items.map((i) => i.id);
-  const optionalCharacterTarget = [...characterIds, ""];
-  const optionalItemTarget = [...itemIds, ""];
 
   const tools: ToolDef[] = [
     {
@@ -225,8 +223,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           message: { type: "string" },
           targetId: {
             type: "string",
-            enum: optionalCharacterTarget,
-            description: "Character being spoken to, or an empty string if said to no one in particular.",
+            enum: characterIds,
+            description: "Character being spoken to. Omit this field entirely if said to no one in particular.",
           },
         },
       },
@@ -294,8 +292,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
               techniqueId: { type: "string", enum: techniqueIds },
               targetId: {
                 type: "string",
-                enum: optionalCharacterTarget,
-                description: "Target character's id, or an empty string if untargeted.",
+                enum: characterIds,
+                description: "Target character's id. Omit this field entirely if untargeted.",
               },
             },
           },
@@ -310,14 +308,13 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
               },
               targetId: {
                 type: "string",
-                enum: optionalCharacterTarget,
-                description: "Target character's id, or an empty string if untargeted.",
+                enum: characterIds,
+                description: "Target character's id. Omit this field entirely if untargeted.",
               },
               itemId: {
                 type: "string",
-                enum: optionalItemTarget,
-                description:
-                  "Id of a carried item being used or equipped, or an empty string if none.",
+                enum: itemIds,
+                description: "Id of a carried item being used or equipped. Omit this field entirely if none.",
               },
             },
           },
