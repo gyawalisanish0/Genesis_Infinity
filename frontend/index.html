@@ -95,7 +95,14 @@
   <dialog id="model-dialog">
     <h2>Model settings</h2>
     <p class="muted small" id="model-dialog-status">Status: —</p>
+    <div class="dialog-actions">
+      <button type="button" id="model-unload-btn" disabled>Unload current model</button>
+    </div>
 
+    <h3>Saved models</h3>
+    <ul id="model-profiles-list" class="plain-list selectable"></ul>
+
+    <h3>Find a new model</h3>
     <div class="backend-tabs">
       <button type="button" class="backend-tab active" id="tab-local" data-backend="llamaCpp">Local GGUF</button>
       <button type="button" class="backend-tab" id="tab-api" data-backend="api">API</button>

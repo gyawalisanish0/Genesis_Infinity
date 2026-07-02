@@ -98,6 +98,19 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
     }
   }
 
+  /**
+   * Disposes the current Engine (freeing the loaded model's RAM) and
+   * returns to idle, without touching anything on disk — a previously
+   * downloaded GGUF stays cached in modelsDir so reloading the same
+   * profile later skips the download.
+   */
+  async function unloadEngine(): Promise<void> {
+    const previousEngine = engine;
+    engine = null;
+    status = { status: "idle" };
+    if (previousEngine) await previousEngine.dispose();
+  }
+
   function currentScope() {
     if (!engine) throw new Error("No model configured yet");
     const state = getState(
@@ -220,6 +233,18 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
 
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Request body must have type \"llamaCpp\" or \"api\"" }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/backend/unload") {
+        if (status.status === "downloading" || status.status === "starting") {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Cannot unload while a model switch is in progress" }));
+          return;
+        }
+        await unloadEngine();
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(status));
         return;
       }
 

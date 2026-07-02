@@ -1,4 +1,5 @@
 const STORAGE_KEY = "genesis-infinity-connection";
+const PROFILES_KEY = "genesis-infinity-model-profiles";
 
 const el = {
   statusDot: document.getElementById("status-dot"),
@@ -32,6 +33,8 @@ const el = {
   modelFileResults: document.getElementById("model-file-results"),
   modelApiForm: document.getElementById("model-api-form"),
   modelApiInput: document.getElementById("model-api-input"),
+  modelProfilesList: document.getElementById("model-profiles-list"),
+  modelUnloadBtn: document.getElementById("model-unload-btn"),
   sidebarEmpty: document.getElementById("sidebar-empty"),
   sidebarContent: document.getElementById("sidebar-content"),
   charName: document.getElementById("char-name"),
@@ -60,6 +63,47 @@ function saveConnection(value) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
 }
 
+// Model profiles - saved per-browser (like connection settings), one entry
+// per distinct model the user has loaded (local GGUF or API), so switching
+// back later doesn't require re-searching. Sanitized the same way
+// modelCatalogue.ts's downloadGgufModel sanitizes a filename onto disk, so
+// a profile can be matched against the server's reported modelPath.
+function sanitizeFilename(filename) {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function profileId(profile) {
+  return profile.type === "llamaCpp" ? `llamaCpp:${profile.repoId}/${profile.filename}` : `api:${profile.model}`;
+}
+
+function loadProfiles() {
+  try {
+    const raw = localStorage.getItem(PROFILES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveProfiles(profiles) {
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+}
+
+function upsertProfile(profile) {
+  const profiles = loadProfiles();
+  const id = profileId(profile);
+  const existing = profiles.findIndex((p) => profileId(p) === id);
+  const entry = { ...profile, lastUsed: Date.now() };
+  if (existing >= 0) profiles[existing] = entry;
+  else profiles.push(entry);
+  saveProfiles(profiles);
+  return entry;
+}
+
+function removeProfile(id) {
+  saveProfiles(loadProfiles().filter((p) => profileId(p) !== id));
+}
+
 function setStatus(state) {
   el.statusDot.classList.remove("connected", "error");
   if (state === "connected") el.statusDot.classList.add("connected");
@@ -70,6 +114,7 @@ let selectedRepo = null;
 let statusPollTimer = null;
 let wasReady = false;
 let modelSwitchInFlight = false;
+let pendingLocalRepo = null; // { repoId, filename } set right before a llamaCpp switch is requested
 
 function describeBackendStatus(status) {
   switch (status.status) {
@@ -106,14 +151,85 @@ function applyBackendStatus(status) {
   const isReady = status.status === "ready";
   el.input.disabled = !isReady;
   el.sendBtn.disabled = !isReady;
+  el.modelUnloadBtn.disabled = !isReady;
 
   if (isReady && !wasReady) {
     apiFetch(`/api/scope?characterId=${encodeURIComponent(connection.characterId)}`)
       .then(renderScope)
       .catch(() => {});
     addMessage(`Model ready: ${describeBackendStatus(status)}`, "system");
+    recordProfileFromStatus(status);
   }
   wasReady = isReady;
+  renderProfiles(status);
+}
+
+// Called only once a switch actually reaches "ready" - an attempt that
+// errors out never gets saved as a profile.
+function recordProfileFromStatus(status) {
+  if (status.backend.type === "llamaCpp" && pendingLocalRepo) {
+    const expectedBasename = sanitizeFilename(pendingLocalRepo.filename);
+    if (status.backend.modelPath.endsWith(expectedBasename)) {
+      upsertProfile({
+        type: "llamaCpp",
+        repoId: pendingLocalRepo.repoId,
+        filename: pendingLocalRepo.filename,
+        displayName: `${pendingLocalRepo.repoId} / ${pendingLocalRepo.filename}`,
+      });
+    }
+  } else if (status.backend.type === "api") {
+    upsertProfile({ type: "api", model: status.backend.model, displayName: status.backend.model });
+  }
+  pendingLocalRepo = null;
+}
+
+function isProfileActive(profile, status) {
+  if (status.status !== "ready") return false;
+  if (profile.type === "llamaCpp") {
+    return status.backend.type === "llamaCpp" && status.backend.modelPath.endsWith(sanitizeFilename(profile.filename));
+  }
+  return status.backend.type === "api" && status.backend.model === profile.model;
+}
+
+function renderProfiles(status) {
+  const profiles = loadProfiles().sort((a, b) => b.lastUsed - a.lastUsed);
+  el.modelProfilesList.innerHTML = "";
+  if (profiles.length === 0) {
+    el.modelProfilesList.innerHTML = '<li class="empty">No saved models yet - load one below to save it.</li>';
+    return;
+  }
+  for (const profile of profiles) {
+    const id = profileId(profile);
+    const li = document.createElement("li");
+    if (isProfileActive(profile, status)) li.classList.add("selected");
+
+    const label = document.createElement("span");
+    label.className = "profile-label";
+    const badge = document.createElement("span");
+    badge.className = "profile-badge";
+    badge.textContent = profile.type === "llamaCpp" ? "Local" : "API";
+    const name = document.createElement("span");
+    name.textContent = profile.displayName;
+    label.append(badge, name);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "profile-remove";
+    removeBtn.setAttribute("aria-label", "Remove saved model");
+    removeBtn.textContent = "×";
+    removeBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      removeProfile(id);
+      pollBackendStatus();
+    });
+
+    li.append(label, removeBtn);
+    li.addEventListener("click", () => {
+      if (profile.type === "llamaCpp") loadLocalModel(profile.repoId, profile.filename);
+      else useApiModel(profile.model);
+    });
+    el.modelProfilesList.appendChild(li);
+  }
 }
 
 async function pollBackendStatus() {
@@ -293,6 +409,7 @@ async function selectRepo(repoId) {
 async function loadLocalModel(repoId, filename) {
   if (modelSwitchInFlight) return;
   modelSwitchInFlight = true;
+  pendingLocalRepo = { repoId, filename };
   try {
     await apiFetch("/api/backend", {
       method: "POST",
@@ -302,6 +419,32 @@ async function loadLocalModel(repoId, filename) {
     pollBackendStatus();
   } catch (error) {
     modelSwitchInFlight = false;
+    pendingLocalRepo = null;
+    el.modelDialogStatus.textContent = `Status: ${error.message}`;
+  }
+}
+
+async function useApiModel(model) {
+  if (!model || modelSwitchInFlight) return;
+  modelSwitchInFlight = true;
+  try {
+    await apiFetch("/api/backend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "api", model }),
+    });
+    pollBackendStatus();
+  } catch (error) {
+    modelSwitchInFlight = false;
+    el.modelDialogStatus.textContent = `Status: ${error.message}`;
+  }
+}
+
+async function unloadModel() {
+  try {
+    await apiFetch("/api/backend/unload", { method: "POST" });
+    pollBackendStatus();
+  } catch (error) {
     el.modelDialogStatus.textContent = `Status: ${error.message}`;
   }
 }
@@ -322,23 +465,12 @@ el.modelSearchForm.addEventListener("submit", async (event) => {
   }
 });
 
-el.modelApiForm.addEventListener("submit", async (event) => {
+el.modelApiForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const model = el.modelApiInput.value.trim();
-  if (!model || modelSwitchInFlight) return;
-  modelSwitchInFlight = true;
-  try {
-    await apiFetch("/api/backend", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "api", model }),
-    });
-    pollBackendStatus();
-  } catch (error) {
-    modelSwitchInFlight = false;
-    el.modelDialogStatus.textContent = `Status: ${error.message}`;
-  }
+  useApiModel(el.modelApiInput.value.trim());
 });
+
+el.modelUnloadBtn.addEventListener("click", unloadModel);
 
 el.settingsBtn.addEventListener("click", openSettings);
 el.settingsCancel.addEventListener("click", () => el.settingsDialog.close());
@@ -381,6 +513,8 @@ el.composer.addEventListener("submit", async (event) => {
     el.input.focus();
   }
 });
+
+renderProfiles({ status: "idle" });
 
 connection = loadConnection();
 if (connection) {
