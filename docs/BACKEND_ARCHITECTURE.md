@@ -773,6 +773,15 @@ design above for beta scope.
   prompt states for a proposed action's `description` (above) — both close
   off the same class of prompt-injection-style attempt to get the model to
   treat unverified player-asserted claims as ground truth.
+  `EngineOptions.playerCharacterId` (the same id `io/`'s `--character` and
+  `server/`'s `characterId` already use for `scope/` rendering) is also
+  named explicitly in the system prompt — "The connected player controls
+  X (id: ...), when they write in first person they always mean this
+  character" — added after a real session showed a model asking "which
+  character are you referring to?" on a plain "Where am I?": the
+  character list alone gives the model no way to know which one is "I"
+  without this line, and single-player-per-session was already an
+  implicit assumption everywhere else in the design.
 - **`timeline/`** (`src/timeline/index.ts`) — a real-wall-clock-anchored
   counter, deliberately separate from the turn-based `dtm` timestamp above
   (which counts player inputs, not elapsed time). `createTimeline(now =

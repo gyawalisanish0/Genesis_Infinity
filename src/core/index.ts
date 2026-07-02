@@ -9,6 +9,14 @@ export interface EngineOptions {
   dbPath: string;
   /** Which LlmDriver backs the session - a local node-llama-cpp model or a remote OpenAI-compatible API (see ai/llmDriver.ts). */
   backend: BackendConfig;
+  /**
+   * Which character the one connected player controls (see io/'s
+   * --character flag, server/'s ServerOptions.characterId). Told to the
+   * model explicitly so first-person player input ("I", "me", "my") has a
+   * fixed referent — without this, the model has no way to know who "I"
+   * is and reasonably asks the player to clarify every time.
+   */
+  playerCharacterId: string;
   /** Called after each tool call resolves — used by io/'s debug-dump mode. */
   onToolCall?: (call: ToolCallRecord) => void;
 }
@@ -29,13 +37,17 @@ export interface Engine {
   dispose(): Promise<void>;
 }
 
-function buildSystemPrompt(loaded: LoadedExperience): string {
+function buildSystemPrompt(loaded: LoadedExperience, playerCharacterId: string): string {
   const characterList = loaded.characters
     .map((c) => `${c.name} (id: "${c.id}")`)
     .join(", ");
+  const playerCharacterName = loaded.characters.find((c) => c.id === playerCharacterId)?.name ?? playerCharacterId;
   return [
     `You are the narrator and game master for "${loaded.experience.name}", set in "${loaded.world.name}".`,
     `Characters in this Experience: ${characterList}.`,
+    `The connected player controls ${playerCharacterName} (id: "${playerCharacterId}"). ` +
+      "When the player writes in first person (\"I\", \"me\", \"my\"), they always mean this " +
+      "character — never ask the player which character they're referring to.",
     "Always use a character's id — not their name — for characterId parameters in tool calls.",
     "Use the available tools to check the game state before narrating or acting.",
     "Never describe a change to the world without making it happen through a tool call first.",
@@ -66,7 +78,7 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
   const aiSession = await createAiSession({
     backend: options.backend,
     toolCtx,
-    systemPrompt: buildSystemPrompt(loaded),
+    systemPrompt: buildSystemPrompt(loaded, options.playerCharacterId),
     onToolCall: options.onToolCall,
   });
 

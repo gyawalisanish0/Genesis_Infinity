@@ -97,6 +97,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         experienceDir: options.experienceDir,
         dbPath: options.dbPath,
         backend,
+        playerCharacterId: options.characterId,
       });
       status = readyStatus;
     } catch (error) {
