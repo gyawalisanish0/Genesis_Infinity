@@ -2,7 +2,7 @@ name: Sync to Hugging Face API Server Space
 
 on:
   push:
-    branches: [claude/claude-md-docs-i19au3]
+    branches: [main]
     paths:
       - "src/**"
       - "examples/**"
