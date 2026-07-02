@@ -362,10 +362,19 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       let auditResult = { consistent: true } as Awaited<ReturnType<NarrationAuditor["audit"]>>;
       let retries = 0;
 
+      // Some backends (see apiDriver.ts's tool-calling loop) occasionally
+      // return an empty final message after a round of tool calls — the
+      // model considers the turn done without ever writing narration text.
+      // Blank narration is never acceptable regardless of what the audit
+      // would otherwise say, so it's treated as an automatic inconsistency.
+      const isBlank = (text: string) => text.trim().length === 0;
+
       // Only check turns where `action` was called — say/note_hazard/check
       // tools have no mechanical outcome a narration could contradict.
       if (actionCalls.length > 0) {
-        auditResult = await narrationAuditor.audit(narration, turnToolCalls);
+        auditResult = isBlank(narration)
+          ? { consistent: false, contradiction: "Narration was empty." }
+          : await narrationAuditor.audit(narration, turnToolCalls);
 
         while (!auditResult.consistent && retries < MAX_NARRATION_RETRIES) {
           retries += 1;
@@ -377,12 +386,21 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           // No `tools` here — this must not re-trigger tool calls and
           // re-apply state a second time, only regenerate the description.
           narration = await session.prompt(correction);
-          auditResult = await narrationAuditor.audit(narration, turnToolCalls);
+          auditResult = isBlank(narration)
+            ? { consistent: false, contradiction: "Narration was empty." }
+            : await narrationAuditor.audit(narration, turnToolCalls);
         }
 
         if (!auditResult.consistent) {
           narration = buildFallbackNarration(actionCalls);
         }
+      } else if (isBlank(narration)) {
+        // No action this turn (say/note_hazard/check only), but the model
+        // still returned no text — ask once more instead of leaving the
+        // player with an empty chat bubble.
+        narration = await session.prompt(
+          "Your last reply had no narration text. Describe what happened in plain text.",
+        );
       }
 
       options.toolCtx.dtm.append({
