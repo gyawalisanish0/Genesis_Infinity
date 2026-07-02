@@ -6,6 +6,7 @@ import { getScope } from "../scope/index.js";
 import type { BackendConfig } from "../ai/index.js";
 import { searchGgufModels, listGgufFiles, downloadGgufModel } from "./modelCatalogue.js";
 import { KNOWN_API_PROVIDERS, isKnownApiProvider, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
+import { listApiModels } from "./apiModelCatalogue.js";
 
 export interface ServerOptions {
   experienceDir: string;
@@ -168,6 +169,20 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           .map((id) => ({ id, label: KNOWN_API_PROVIDERS[id].label }));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(configured));
+        return;
+      }
+
+      const apiModelsMatch = url.pathname.match(/^\/api\/models\/api\/([^/]+)$/);
+      if (req.method === "GET" && apiModelsMatch) {
+        const provider = apiModelsMatch[1]!;
+        if (!isKnownApiProvider(provider) || !options.apiProviders?.[provider]) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `Provider "${provider}" is not configured on this server` }));
+          return;
+        }
+        const models = await listApiModels(provider);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(models));
         return;
       }
 

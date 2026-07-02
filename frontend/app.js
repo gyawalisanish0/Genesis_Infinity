@@ -33,6 +33,9 @@ const el = {
   modelFileResults: document.getElementById("model-file-results"),
   modelApiForm: document.getElementById("model-api-form"),
   modelApiProvider: document.getElementById("model-api-provider"),
+  modelApiSelectWrap: document.getElementById("model-api-select-wrap"),
+  modelApiModelSelect: document.getElementById("model-api-model-select"),
+  modelApiManualLabel: document.getElementById("model-api-manual-label"),
   modelApiInput: document.getElementById("model-api-input"),
   modelApiNone: document.getElementById("model-api-none"),
   modelProfilesList: document.getElementById("model-profiles-list"),
@@ -119,6 +122,7 @@ let statusPollTimer = null;
 let wasReady = false;
 let modelSwitchInFlight = false;
 let pendingLocalRepo = null; // { repoId, filename } set right before a llamaCpp switch is requested
+let autoOpenedModelDialog = false; // reset per connect() - guides a fresh connection straight to model selection
 
 function describeBackendStatus(status) {
   switch (status.status) {
@@ -152,6 +156,11 @@ function applyBackendStatus(status) {
 
   if (status.status === "ready" || status.status === "error") {
     modelSwitchInFlight = false;
+  }
+
+  if (status.status === "idle" && !autoOpenedModelDialog) {
+    autoOpenedModelDialog = true;
+    openModelDialog();
   }
 
   const isReady = status.status === "ready";
@@ -341,6 +350,7 @@ async function apiFetch(path, options = {}) {
 
 async function connect() {
   setStatus(null);
+  autoOpenedModelDialog = false;
   try {
     const health = await apiFetch("/api/health");
     el.experienceName.textContent = health.experience ?? "Genesis Infinity";
@@ -396,6 +406,31 @@ async function loadApiProviders() {
   el.modelApiProvider.disabled = !hasProviders;
   el.modelApiInput.disabled = !hasProviders;
   el.modelApiForm.querySelector("button[type=submit]").disabled = !hasProviders;
+
+  if (hasProviders) await loadApiModelsForProvider(el.modelApiProvider.value);
+}
+
+// Populates the free-model dropdown for a provider, if that provider has a
+// public catalogue (only OpenRouter does today - see apiModelCatalogue.ts).
+// Falls back to manual model-id entry (the only option) when it doesn't.
+async function loadApiModelsForProvider(provider) {
+  el.modelApiModelSelect.innerHTML = "";
+  let models = [];
+  try {
+    models = await apiFetch(`/api/models/api/${encodeURIComponent(provider)}`);
+  } catch {
+    models = [];
+  }
+  const hasModels = models.length > 0;
+  el.modelApiSelectWrap.classList.toggle("hidden", !hasModels);
+  el.modelApiManualLabel.textContent = hasModels ? "Or enter a model id manually" : "Model id";
+  el.modelApiInput.required = !hasModels;
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = model.label;
+    el.modelApiModelSelect.appendChild(option);
+  }
 }
 
 function renderSearchResults(results) {
@@ -486,6 +521,7 @@ el.modelBtn.addEventListener("click", openModelDialog);
 el.modelDialogClose.addEventListener("click", () => el.modelDialog.close());
 el.tabLocal.addEventListener("click", () => switchBackendTab("llamaCpp"));
 el.tabApi.addEventListener("click", () => switchBackendTab("api"));
+el.modelApiProvider.addEventListener("change", () => loadApiModelsForProvider(el.modelApiProvider.value));
 
 el.modelSearchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -500,7 +536,8 @@ el.modelSearchForm.addEventListener("submit", async (event) => {
 
 el.modelApiForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  useApiModel(el.modelApiProvider.value, el.modelApiInput.value.trim());
+  const model = el.modelApiInput.value.trim() || el.modelApiModelSelect.value;
+  useApiModel(el.modelApiProvider.value, model);
 });
 
 el.modelUnloadBtn.addEventListener("click", unloadModel);
