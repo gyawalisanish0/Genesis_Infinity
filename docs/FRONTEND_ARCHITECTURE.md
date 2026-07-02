@@ -56,7 +56,12 @@ A separate "Model settings" `<dialog>`, opened from a topbar status
 button that shows the live model name/status (polled from
 `GET /api/backend/status`), is the runtime backend/model picker. It has
 three parts: an unload action, saved model profiles, and tabs for
-finding a new model.
+finding a new model. It also **auto-opens once per connection** if status
+comes back `"idle"` — a fresh connection has no usable chat yet, so the
+picker is forced in front of it rather than leaving an apparently-live
+composer sitting over a disabled/broken-looking chat. Tracked by a
+one-shot `autoOpenedModelDialog` flag reset at the top of `connect()`, so
+it won't keep popping back if the user closes it while still idle.
 
 **Unload.** A button (`#model-unload-btn`, enabled only while a model is
 `"ready"`) posts to `POST /api/backend/unload`, freeing the server's
@@ -89,12 +94,22 @@ through identical code). A `llamaCpp` profile is only recorded once
 - **API tab** — fetches `GET /api/backend/providers` (on tab switch) to
   populate a provider `<select>` with only the providers this server
   actually has a key for; shows "no API providers configured" and
-  disables the form if that list is empty. Posts
-  `{type: "api", provider, model}` for the chosen provider id and a typed
-  model id. The frontend never collects or transmits an actual API
-  credential (base URL / key) for any provider — only ever a provider id
-  and a model id string — since those credentials are server-side-only
-  secrets, one per provider (see `docs/BACKEND_ARCHITECTURE.md`).
+  disables the form if that list is empty. Once a provider is picked (on
+  tab switch and on the provider `<select>`'s `change` event), fetches
+  `GET /api/models/api/:provider` and, if that provider has a public free-model
+  catalogue (only OpenRouter does today — see `apiModelCatalogue.ts` in
+  `docs/BACKEND_ARCHITECTURE.md`), shows a second `<select>` of free,
+  tool-calling-capable models instead of a blind text field — nobody
+  reasonably types an exact model slug from memory on a phone. A manual
+  "or enter a model id" text field stays available underneath (required
+  only when the provider has no catalogue) and, if filled in, overrides
+  the dropdown — so advanced users can still target a model that isn't
+  free or isn't in the list. Posts `{type: "api", provider, model}` for
+  the chosen provider id and whichever model id won. The frontend never
+  collects or transmits an actual API credential (base URL / key) for any
+  provider — only ever a provider id and a model id string — since those
+  credentials are server-side-only secrets, one per provider (see
+  `docs/BACKEND_ARCHITECTURE.md`).
 
 Both the local-file click and the API-form submit (and reloading a saved
 profile) go through a `modelSwitchInFlight` guard so a double-tap can't

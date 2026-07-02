@@ -834,6 +834,12 @@ design above for beta scope.
     `{id, label}[]` — never the base URL or key. Drives the frontend's
     provider `<select>`, and lets it show "no providers configured" if
     the list comes back empty.
+  - `GET /api/models/api/:provider` — proxies `apiModelCatalogue.ts`'s
+    `listApiModels`, `400`s if the provider isn't known/configured (same
+    check as `POST /api/backend`). Returns `{id, label}[]` of that
+    provider's free, tool-calling-capable models, or `[]` if the provider
+    has no public catalogue to query — the frontend falls back to manual
+    model-id entry in that case.
   - `POST /api/backend` — `{type: "llamaCpp", repoId, filename}` or
     `{type: "api", provider, model}`. Rejects with `409` if a switch is
     already `downloading`/`starting` — a real HF Space session showed two
@@ -885,6 +891,18 @@ design above for beta scope.
   map and won't appear in the frontend's picker. Adding a new provider
   later is one entry in this file plus a new secret, no frontend changes
   needed (it's discovered automatically via `GET /api/backend/providers`).
+- **`server/apiModelCatalogue.ts`** — per-provider free-model listers,
+  keyed the same way `apiProviders.ts` is. Currently only
+  `openrouter` has one (`listFreeOpenRouterModels`, hitting OpenRouter's
+  public, unauthenticated `GET /api/v1/models` and filtering to
+  `pricing.prompt === "0" && pricing.completion === "0"` plus
+  `supported_parameters` including `"tools"` — a model this engine can't
+  drive tool calls with can't run a turn regardless of price). A provider
+  with no lister here just returns `[]`, which the frontend takes as "no
+  catalogue, fall back to manual entry" rather than an error. Added after
+  a real user typed a bare word ("Llama") into the old free-text-only
+  model-id field and got a `400` from OpenRouter — a raw text field for a
+  provider's exact model slug isn't a workable UI on its own.
 - **`frontend/`** — the static web UI that drives `server/`'s API from a
   browser. See `docs/FRONTEND_ARCHITECTURE.md` for its design.
 
