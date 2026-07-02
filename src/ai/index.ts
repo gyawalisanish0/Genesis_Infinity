@@ -387,15 +387,24 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       // Some backends (see apiDriver.ts's tool-calling loop) occasionally
       // return an empty final message after a round of tool calls — the
       // model considers the turn done without ever writing narration text.
-      // Blank narration is never acceptable regardless of what the audit
-      // would otherwise say, so it's treated as an automatic inconsistency.
-      const isBlank = (text: string) => text.trim().length === 0;
+      // Others (observed live: a free OpenRouter model that doesn't
+      // reliably use the API's native tool-calling) fall back to writing a
+      // textual pseudo-tool-call like `<tool_call>{"name": ...}</tool_call>`
+      // directly into its content instead of populating tool_calls - since
+      // that's not real JSON in the response's tool_calls field, apiDriver.ts
+      // has no way to intercept it, and it would otherwise be shown to the
+      // player verbatim. Neither case is ever acceptable narration
+      // regardless of what the audit would otherwise say.
+      const LEAKED_TOOL_CALL_PATTERN = /<\s*\/?\s*tool_call\s*>|<\|tool_call\|>|<\s*function_call\s*>/i;
+      const isInvalidNarration = (text: string) =>
+        text.trim().length === 0 || LEAKED_TOOL_CALL_PATTERN.test(text);
+      const invalidReason = "Narration was empty, or leaked raw tool-call syntax instead of prose.";
 
       // Only check turns where `action` was called — say/note_hazard/check
       // tools have no mechanical outcome a narration could contradict.
       if (actionCalls.length > 0) {
-        auditResult = isBlank(narration)
-          ? { consistent: false, contradiction: "Narration was empty." }
+        auditResult = isInvalidNarration(narration)
+          ? { consistent: false, contradiction: invalidReason }
           : await narrationAuditor.audit(narration, turnToolCalls);
 
         while (!auditResult.consistent && retries < MAX_NARRATION_RETRIES) {
@@ -403,26 +412,31 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           const correction = [
             `Your narration didn't match what actually happened: ${auditResult.contradiction}`,
             `The actual tool results this turn: ${JSON.stringify(turnToolCalls)}`,
-            "Rewrite your narration to accurately reflect this.",
+            "Rewrite your narration to accurately reflect this, as plain prose only - no tool-call syntax.",
           ].join("\n");
           // No `tools` here — this must not re-trigger tool calls and
           // re-apply state a second time, only regenerate the description.
           narration = await session.prompt(correction);
-          auditResult = isBlank(narration)
-            ? { consistent: false, contradiction: "Narration was empty." }
+          auditResult = isInvalidNarration(narration)
+            ? { consistent: false, contradiction: invalidReason }
             : await narrationAuditor.audit(narration, turnToolCalls);
         }
 
         if (!auditResult.consistent) {
           narration = buildFallbackNarration(actionCalls);
         }
-      } else if (isBlank(narration)) {
+      } else if (isInvalidNarration(narration)) {
         // No action this turn (say/note_hazard/check only), but the model
-        // still returned no text — ask once more instead of leaving the
-        // player with an empty chat bubble.
+        // still returned no usable text — ask once more instead of leaving
+        // the player with an empty or garbled response.
         narration = await session.prompt(
-          "Your last reply had no narration text. Describe what happened in plain text.",
+          "Your last reply had no narration text (or wasn't valid prose). Describe what happened in plain text, with no tool-call syntax.",
         );
+        if (isInvalidNarration(narration)) {
+          // Guarantees the player is never shown a blank or garbled reply,
+          // even when the model repeatedly fails to produce real prose.
+          narration = "The Engine couldn't produce a response for that — try rephrasing what your character does.";
+        }
       }
 
       options.toolCtx.dtm.append({
