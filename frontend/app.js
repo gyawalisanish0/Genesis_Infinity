@@ -415,6 +415,10 @@ async function loadApiProviders() {
 // Falls back to manual model-id entry (the only option) when it doesn't.
 async function loadApiModelsForProvider(provider) {
   el.modelApiModelSelect.innerHTML = "";
+  // Stale manual text must never silently outlive a provider switch and
+  // override whatever the dropdown ends up defaulting to (see the submit
+  // handler below, which prefers a non-empty manual value over the select).
+  el.modelApiInput.value = "";
   let models = [];
   try {
     models = await apiFetch(`/api/models/api/${encodeURIComponent(provider)}`);
@@ -532,6 +536,14 @@ el.modelSearchForm.addEventListener("submit", async (event) => {
   } catch (error) {
     el.modelSearchResults.innerHTML = `<li class="empty">${error.message}</li>`;
   }
+});
+
+// An explicit dropdown pick must never be silently overridden by leftover
+// text in the manual field (mobile autofill, or a value typed before
+// switching to the dropdown) - selecting a free model clears it so the
+// dropdown's choice always wins for that selection.
+el.modelApiModelSelect.addEventListener("change", () => {
+  el.modelApiInput.value = "";
 });
 
 el.modelApiForm.addEventListener("submit", (event) => {
