@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Genesis Infinity</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-title">
+        <span class="dot" id="status-dot"></span>
+        <span id="experience-name">Genesis Infinity</span>
+      </div>
+      <button id="settings-btn" class="icon-btn" title="Connection settings" aria-label="Connection settings">⚙</button>
+    </header>
+
+    <main class="layout">
+      <section class="chat">
+        <div class="messages" id="messages"></div>
+        <form class="composer" id="composer">
+          <input
+            id="input"
+            type="text"
+            placeholder="What does your character do?"
+            autocomplete="off"
+            disabled
+          />
+          <button type="submit" id="send-btn" disabled>Send</button>
+        </form>
+      </section>
+
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-empty" id="sidebar-empty">Connect to see character info.</div>
+        <div class="sidebar-content hidden" id="sidebar-content">
+          <h2 id="char-name">—</h2>
+          <p class="char-sub" id="char-sub"></p>
+
+          <div class="meter-block">
+            <div class="meter-label">
+              <span>HP</span>
+              <span id="hp-value">—</span>
+            </div>
+            <div class="meter-track"><div class="meter-fill" id="hp-fill"></div></div>
+          </div>
+
+          <div class="stat-tile">
+            <span class="stat-label">Armor Class</span>
+            <span class="stat-value" id="ac-value">—</span>
+          </div>
+
+          <h3>Location</h3>
+          <p id="node-name" class="muted">—</p>
+          <p id="node-desc" class="muted small"></p>
+
+          <h3>Inventory</h3>
+          <ul id="inventory-list" class="plain-list"></ul>
+
+          <h3>Present</h3>
+          <ul id="others-list" class="plain-list"></ul>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <dialog id="settings-dialog">
+    <form id="settings-form">
+      <h2>Connection settings</h2>
+      <label>
+        API base URL
+        <input id="setting-base-url" type="url" placeholder="https://your-space.hf.space" required />
+      </label>
+      <label>
+        API key
+        <input id="setting-api-key" type="password" placeholder="shared secret" />
+      </label>
+      <label>
+        Character id
+        <input id="setting-character-id" type="text" placeholder="goku" required />
+      </label>
+      <div class="dialog-actions">
+        <button type="button" id="settings-cancel">Cancel</button>
+        <button type="submit">Connect</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

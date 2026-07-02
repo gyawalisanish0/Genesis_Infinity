@@ -799,6 +799,52 @@ design above for beta scope.
     item below); `io/` takes `--character <id>` as a CLI argument instead,
     keeping this a runtime/session concern rather than Experience-authored
     data.
+- **`server/`** (`src/server/index.ts`, `src/server/cli.ts`) — an HTTP
+  bridge for `frontend/`'s web UI, since `core/`'s `Engine` was previously
+  only ever driven directly from `io/`'s stdin loop. `startServer(options)`
+  builds one `Engine` (same `createEngine` as `io/`) and keeps it resident
+  for the process lifetime — beta scope is explicitly **single-session**:
+  one Engine, one player-controlled `characterId`, no accounts or
+  concurrent-session routing. A plain `node:http` server (no framework
+  dependency) exposes three routes:
+  - `GET /api/health` — `{status, experience}`, unauthenticated (so the
+    frontend's initial connectivity check and any uptime probe don't need
+    the key).
+  - `GET /api/scope?characterId=X` — the same `Scope` `getScope` would
+    return to the model, reused as-is for the UI's stats/inventory panel
+    rather than defining a second shape.
+  - `POST /api/turn {input}` — calls `engine.takeTurn(input)`, returns
+    `{narration, scope}` (the post-turn scope bundled in the same response
+    so the frontend never has to make two round trips per turn).
+  All three set CORS headers for a single configured `corsOrigin` (the
+  GitHub Pages origin), and `/api/scope`/`/api/turn` are gated behind an
+  `X-Api-Key` header checked against a `SERVER_API_KEY` — this is a public
+  endpoint sitting in front of a real, cost-incurring model call, so even
+  single-session beta ships with a shared-secret gate rather than none;
+  `server/cli.ts` prints a startup warning if it's left unset. `cli.ts`
+  reads its entire configuration from environment variables (not CLI
+  flags, since it's meant to run unattended in a container — see
+  `deploy/hf-space-server/`) and defaults to the `api` `LlmDriver` backend
+  rather than `llamaCpp`, since this deployment is meant to be a
+  lightweight, always-listening process, not one carrying a multi-GB local
+  model.
+- **`frontend/`** (`frontend/index.html`, `style.css`, `app.js`) — a
+  small static single-page UI, plain HTML/CSS/JS with no build step and no
+  framework dependency, styled dark and chat-like in the spirit of
+  Open WebUI without depending on that project's codebase (a fork was
+  considered and rejected — see the design discussion for why: a large
+  Python+Svelte codebase for a project that's otherwise 100% TypeScript,
+  built around generic chat rather than game-specific UI, with an ongoing
+  upstream-merge tax). Connection settings (API base URL, shared secret,
+  character id) are entered once via a `<dialog>` and cached in
+  `localStorage`. On connect, it calls `/api/health` then `/api/scope` and
+  renders a stats sidebar (HP as a severity-colored meter — green above
+  50%, amber above 25%, red below; armor class as a plain stat tile;
+  location, inventory, and who else is present) that collapses below the
+  chat log on narrow (phone) viewports rather than beside it. Submitting
+  the composer posts to `/api/turn` and appends both the player's line and
+  the returned narration to the message log, then re-renders the sidebar
+  from the response's bundled `scope`.
 
 ### Test Experience: Goku vs Venom — Null Void Showdown
 

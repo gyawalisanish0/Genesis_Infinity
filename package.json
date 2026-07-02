@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "play": "tsx src/io/cli.ts",
+    "serve": "tsx src/server/cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

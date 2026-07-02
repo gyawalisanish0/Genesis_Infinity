@@ -1,0 +1,44 @@
+name: Sync to Hugging Face API Server Space
+
+on:
+  push:
+    branches: [claude/claude-md-docs-i19au3]
+    paths:
+      - "src/**"
+      - "examples/**"
+      - "package.json"
+      - "tsconfig.json"
+      - "deploy/hf-space-server/**"
+      - ".github/workflows/sync-hf-space-server.yml"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble Space contents
+        run: |
+          rm -rf /tmp/server-space
+          mkdir -p /tmp/server-space
+          cp package.json tsconfig.json /tmp/server-space/
+          cp -r src /tmp/server-space/src
+          mkdir -p /tmp/server-space/examples/goku-vs-venom/characters
+          cp examples/goku-vs-venom/characters/*.json /tmp/server-space/examples/goku-vs-venom/characters/
+          cp examples/goku-vs-venom/experience.json examples/goku-vs-venom/world.json /tmp/server-space/examples/goku-vs-venom/
+          cp deploy/hf-space-server/Dockerfile /tmp/server-space/Dockerfile
+          cp deploy/hf-space-server/README.md /tmp/server-space/README.md
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          cd /tmp/server-space
+          git init -q
+          git checkout -q -b main
+          git add -A
+          git -c user.name="genesis-infinity-ci" -c user.email="ci@genesis-infinity.local" \
+            commit -q -m "Sync from ${{ github.sha }}"
+          git remote add space "https://user:${HF_TOKEN}@huggingface.co/spaces/gyawalisanish0/genesis-infinity-server"
+          git push --force space main
