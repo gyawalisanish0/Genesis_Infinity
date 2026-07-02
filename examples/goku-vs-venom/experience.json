@@ -1,0 +1,8 @@
+{
+  "id": "goku-vs-venom-null-void",
+  "name": "Goku vs Venom: Null Void Showdown",
+  "characters": [
+    { "characterId": "goku", "startingNodeId": "battlefield-core" },
+    { "characterId": "venom", "startingNodeId": "drifting-wreckage" }
+  ]
+}

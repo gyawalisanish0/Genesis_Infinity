@@ -1,0 +1,32 @@
+{
+  "id": "venom",
+  "name": "Venom (Eddie Brock)",
+  "class": "Symbiote Host",
+  "race": "Human/Symbiote",
+  "background": "Anti-Hero",
+  "level": 18,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 19 },
+    { "id": "dex", "name": "Dexterity", "score": 16 },
+    { "id": "con", "name": "Constitution", "score": 18 },
+    { "id": "int", "name": "Intelligence", "score": 13 },
+    { "id": "wis", "name": "Wisdom", "score": 11 },
+    { "id": "cha", "name": "Charisma", "score": 10 }
+  ],
+  "skills": [
+    { "id": "athletics", "name": "Athletics", "governingAbilityId": "str", "value": 8 },
+    { "id": "acrobatics", "name": "Acrobatics", "governingAbilityId": "dex", "value": 7 },
+    { "id": "intimidation", "name": "Intimidation", "governingAbilityId": "cha", "value": 9 },
+    { "id": "stealth", "name": "Stealth", "governingAbilityId": "dex", "value": 6 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 5 }
+  ],
+  "techniques": [
+    { "id": "symbiote-tendrils", "name": "Symbiote Tendrils", "description": "Lashes out with whip-like extensions of the symbiote mass." },
+    { "id": "venom-bite", "name": "Venom Bite", "description": "A vicious bite from the symbiote's fanged maw." }
+  ],
+  "inventory": [
+    { "itemId": "iron-shield", "quantity": 1, "equipped": false }
+  ],
+  "hitPoints": { "current": 160, "max": 160 },
+  "armorClass": 16
+}

@@ -1,0 +1,32 @@
+{
+  "id": "goku",
+  "name": "Son Goku",
+  "class": "Saiyan Warrior",
+  "race": "Saiyan",
+  "background": "Defender of Earth",
+  "level": 20,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 20 },
+    { "id": "dex", "name": "Dexterity", "score": 18 },
+    { "id": "con", "name": "Constitution", "score": 19 },
+    { "id": "int", "name": "Intelligence", "score": 12 },
+    { "id": "wis", "name": "Wisdom", "score": 14 },
+    { "id": "cha", "name": "Charisma", "score": 16 }
+  ],
+  "skills": [
+    { "id": "athletics", "name": "Athletics", "governingAbilityId": "str", "value": 9 },
+    { "id": "acrobatics", "name": "Acrobatics", "governingAbilityId": "dex", "value": 8 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 7 },
+    { "id": "intimidation", "name": "Intimidation", "governingAbilityId": "cha", "value": 6 },
+    { "id": "survival", "name": "Survival", "governingAbilityId": "wis", "value": 6 }
+  ],
+  "techniques": [
+    { "id": "kamehameha", "name": "Kamehameha", "description": "A concentrated beam of ki fired from cupped hands." },
+    { "id": "instant-transmission", "name": "Instant Transmission", "description": "Teleports instantly to a locked-onto ki signature." }
+  ],
+  "inventory": [
+    { "itemId": "health-potion", "quantity": 2 }
+  ],
+  "hitPoints": { "current": 180, "max": 180 },
+  "armorClass": 18
+}
