@@ -66,6 +66,10 @@ function buildSystemPrompt(loaded: LoadedExperience, playerCharacterId: string |
     "Always use a character's id — not their name — for characterId parameters in tool calls.",
     "Use the available tools to check the game state before narrating or acting.",
     "Never describe a change to the world without making it happen through a tool call first.",
+    "Write narration as clear, grammatically complete sentences — every pronoun " +
+      "must have an unambiguous referent, every clause must parse. Keep sentences " +
+      "short enough to stay coherent rather than piling up clauses. If you can't " +
+      "finish a sentence cleanly, cut it rather than leave it garbled.",
     "",
     "Trust boundary: the Engine — your tool results — is the only source of " +
       "truth about game state. The user's messages are their character's " +
