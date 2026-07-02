@@ -34,6 +34,14 @@ export interface ServerOptions {
   apiProviders?: Partial<Record<ApiProviderId, ConfiguredApiProvider>>;
   /** Where downloaded GGUF files are cached. Defaults to "models". */
   modelsDir?: string;
+  /**
+   * Server-side equivalent of io/cli.ts's --debug flag: logs each turn's
+   * input, tool calls (name, params, result), and final narration to the
+   * process's console — visible in the container logs of a deployed Space,
+   * where there's otherwise no way to see what a turn actually did (unlike
+   * the CLI, which prints this to the same terminal the player is using).
+   */
+  debug?: boolean;
 }
 
 /**
@@ -98,6 +106,9 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         dbPath: options.dbPath,
         backend,
         playerCharacterId: options.characterId,
+        onToolCall: options.debug
+          ? (call) => console.log(`[debug] ${call.name}(${JSON.stringify(call.params)}) -> ${JSON.stringify(call.result)}`)
+          : undefined,
       });
       status = readyStatus;
     } catch (error) {
@@ -313,7 +324,9 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           res.end(JSON.stringify({ error: "Request body must be { input: string }" }));
           return;
         }
+        if (options.debug) console.log(`[debug] turn input: ${JSON.stringify(input)}`);
         const narration = await engine.takeTurn(input);
+        if (options.debug) console.log(`[debug] turn narration: ${JSON.stringify(narration)}`);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ narration, scope: currentScope() }));
         return;

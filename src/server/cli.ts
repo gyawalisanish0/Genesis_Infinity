@@ -13,6 +13,10 @@ import { KNOWN_API_PROVIDERS, type ApiProviderId, type ConfiguredApiProvider } f
  * API-key env var; a provider with no key set is simply unavailable to
  * the frontend's "api" backend picker. The frontend only ever supplies a
  * provider id + model string, never a credential.
+ *
+ * DEBUG=true (or "1") turns on server/index.ts's per-turn console logging
+ * (input, each tool call, final narration) — the server-side equivalent of
+ * io/cli.ts's --debug flag, visible in a deployed Space's container logs.
  */
 async function main(): Promise<void> {
   const experienceDir = process.env.EXPERIENCE_DIR ?? "examples/goku-vs-venom";
@@ -20,6 +24,7 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 7860);
   const corsOrigin = process.env.CORS_ORIGIN ?? "*";
   const apiKey = process.env.SERVER_API_KEY;
+  const debug = process.env.DEBUG === "true" || process.env.DEBUG === "1";
 
   if (!apiKey) {
     console.warn(
@@ -52,6 +57,7 @@ async function main(): Promise<void> {
     corsOrigin,
     apiProviders,
     modelsDir: process.env.MODELS_DIR ?? "models",
+    debug,
   });
 }
 
