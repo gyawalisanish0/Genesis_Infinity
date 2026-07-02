@@ -926,13 +926,21 @@ design above for beta scope.
 
 `examples/goku-vs-venom/` is the smoke-test fixture for the beta slice: Goku
 and Venom (D&D-range stats, 10–20) placed in Ben 10's Null Void dimension —
-one `open`-type region (`null-void-expanse`) with two connected nodes
-(`battlefield-core`, `drifting-wreckage`). The Experience declares no custom
-abilities/skills/effects, exercising the default-ruleset fallback path
-(including `DEFAULT_EFFECTS` for escalation). Each
-character's sheet also declares two `techniques` (Goku: `kamehameha`,
-`instant-transmission`; Venom: `symbiote-tendrils`, `venom-bite`) to exercise
-the `use_technique` capability gate. Verified via ad hoc scripts (not a
+one `open`-type region (`null-void-expanse`) with three connected nodes
+(`battlefield-core`, `drifting-wreckage`, `suspended-shard`), the last
+carrying a genuine `mechanical` environmental code (`gravity`/`unstable`,
+`effectId: "disoriented"`) so the hazard-resolution path is exercised by the
+checked-in fixture itself rather than only ad hoc test data. The Experience
+declares no custom abilities/skills, but does declare a custom `effects`
+entry (`disoriented`, backing the new node's hazard) and two custom `items`
+(`senzu-bean`, a consumable; `salvaged-plating`, equipment) additively
+alongside `DEFAULT_EFFECTS`/`DEFAULT_ITEMS`, exercising both the
+default-ruleset fallback path and `resolveEffectDefs`/`resolveItemDefs`'s
+per-entry-fallback merge in the same fixture. Each character's sheet also
+declares three `techniques` (Goku: `kamehameha`, `instant-transmission`,
+`kaio-ken`; Venom: `symbiote-tendrils`, `venom-bite`,
+`symbiote-camouflage`) to exercise the `use_technique` capability gate.
+Verified via ad hoc scripts (not a
 checked-in test suite yet) that `loadExperience`, `getState`, `getScope`, and
 `tools/`'s `checkAction`/`applyAction` interoperate correctly: starting
 positions resolve from the Experience's declared placements, scope reports
@@ -967,15 +975,16 @@ untouched, `scope/`'s `effectiveStats` matches `state/`'s exactly, a
 character with no active debuffs shows effective stats identical to its
 base sheet, and a sheet declaring neither `armorClass` nor `hitPoints`
 resolves to an empty `effectiveStats` rather than throwing. Also verified
-`applyEnvironmentalEffects` against a node with two injected `mechanical`
-environmental codes (not part of the checked-in fixture): one with an
-`effectId` matching a pool entry applied a real debuff on arrival
-(confirmed via the resulting `effectiveStats` change), the other with an
-unmatched `effectId` produced no mechanical effect at all (the null
-fallback), and `note_hazard` successfully logged a `hazard.noted` event
-for the unresolved one. Also verified the item/inventory system: each
-character's sheet declares a starting `inventory` (Goku: two
-`health-potion`; Venom: one `iron-shield`, unequipped) resolved against
+`applyEnvironmentalEffects` against `suspended-shard`'s checked-in
+`mechanical` environmental code (`gravity`/`unstable` → `effectId:
+"disoriented"`, part of the fixture itself): arriving there applied a
+real debuff (confirmed via the resulting `effectiveStats` change), and
+separately against an injected node with an unmatched `effectId` to
+confirm the null-fallback path (no mechanical effect, `note_hazard` logs
+a `hazard.noted` event instead). Also verified the item/inventory
+system: each character's sheet declares a starting `inventory` (Goku:
+two `health-potion` plus one `senzu-bean`; Venom: one `iron-shield` and
+one `salvaged-plating`, both unequipped) resolved against
 `DEFAULT_ITEMS` via `resolveItemDefs`'s per-entry fallback (same pattern as
 effects/abilities/skills). Confirmed `checkInteract`'s item gate rejects an
 `itemId` the character doesn't carry (and rejects it again once a

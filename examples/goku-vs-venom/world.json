@@ -33,7 +33,10 @@
           "description": "A flat plate of fused wreckage and rock, big enough to fight on, tumbling slowly with no up or down to speak of.",
           "type": "battlefield",
           "localPosition": { "x": 0, "y": 0 },
-          "connections": [{ "targetNodeId": "drifting-wreckage" }]
+          "connections": [
+            { "targetNodeId": "drifting-wreckage" },
+            { "targetNodeId": "suspended-shard" }
+          ]
         },
         {
           "id": "drifting-wreckage",
@@ -41,7 +44,31 @@
           "description": "A loose cluster of broken ships and stone outcroppings, close enough to the battlefield to leap between.",
           "type": "debris-field",
           "localPosition": { "x": 1, "y": 0 },
-          "connections": [{ "targetNodeId": "battlefield-core" }]
+          "connections": [
+            { "targetNodeId": "battlefield-core" },
+            { "targetNodeId": "suspended-shard" }
+          ]
+        },
+        {
+          "id": "suspended-shard",
+          "name": "The Suspended Shard",
+          "description": "A house-sized chunk of shattered moon, hanging motionless where it was torn from its world. The void's pull around it flickers on and off without warning.",
+          "type": "gravity-anomaly",
+          "localPosition": { "x": 1, "y": 1 },
+          "environmentalCodes": [
+            {
+              "category": "gravity",
+              "value": "unstable",
+              "severity": 2,
+              "mechanical": true,
+              "effectId": "disoriented",
+              "description": "Gravity here cuts in and out unpredictably, throwing off footing and aim."
+            }
+          ],
+          "connections": [
+            { "targetNodeId": "battlefield-core" },
+            { "targetNodeId": "drifting-wreckage" }
+          ]
         }
       ]
     }

@@ -22,10 +22,12 @@
   ],
   "techniques": [
     { "id": "kamehameha", "name": "Kamehameha", "description": "A concentrated beam of ki fired from cupped hands." },
-    { "id": "instant-transmission", "name": "Instant Transmission", "description": "Teleports instantly to a locked-onto ki signature." }
+    { "id": "instant-transmission", "name": "Instant Transmission", "description": "Teleports instantly to a locked-onto ki signature." },
+    { "id": "kaio-ken", "name": "Kaio-ken", "description": "A dangerous self-boost that multiplies raw power at the cost of strain on the user's body." }
   ],
   "inventory": [
-    { "itemId": "health-potion", "quantity": 2 }
+    { "itemId": "health-potion", "quantity": 2 },
+    { "itemId": "senzu-bean", "quantity": 1 }
   ],
   "hitPoints": { "current": 180, "max": 180 },
   "armorClass": 18
