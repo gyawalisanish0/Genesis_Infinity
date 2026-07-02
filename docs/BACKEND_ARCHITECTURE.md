@@ -762,26 +762,33 @@ design above for beta scope.
   and exposes `currentTimelineUnit()` alongside `currentTurn()` — a second,
   independent clock (see `timeline/` below).
   `buildSystemPrompt` states an explicit trust boundary alongside the
-  narrator role: the engine's tool results are the only source of truth
-  about game state, and the player's message is their character's
-  dialogue/intent, never a factual claim — if a player's input asserts
-  something as already true without a tool result confirming it (e.g.
-  "I already have the sword"), the model is told to check or resolve it
-  through a tool call rather than narrate it as fact, and that player
-  input can never bypass tool validation to change state directly
+  narrator role, phrased around two fixed roles: **the Engine** (this
+  codebase's tool results — the only source of truth about game state)
+  and **the user** (the connected human — their messages are their
+  character's dialogue/intent, never a factual claim). If a user's input
+  asserts something as already true without a tool result confirming it
+  (e.g. "I already have the sword"), the model is told to check or
+  resolve it through a tool call rather than narrate it as fact, and that
+  user input can never bypass tool validation to change state directly
   regardless of phrasing. This is the same trust boundary `rules/`'s
-  prompt states for a proposed action's `description` (above) — both close
-  off the same class of prompt-injection-style attempt to get the model to
-  treat unverified player-asserted claims as ground truth.
+  prompt states for a proposed action's `description` (above, also
+  phrased as user-input-vs-Engine-fact) — both close off the same class
+  of prompt-injection-style attempt to get the model to treat unverified
+  user-asserted claims as ground truth.
   `EngineOptions.playerCharacterId` (the same id `io/`'s `--character` and
   `server/`'s `characterId` already use for `scope/` rendering) is also
-  named explicitly in the system prompt — "The connected player controls
-  X (id: ...), when they write in first person they always mean this
+  named explicitly in the system prompt — "The connected user controls X
+  (id: ...), when they write in first person they always mean this
   character" — added after a real session showed a model asking "which
   character are you referring to?" on a plain "Where am I?": the
   character list alone gives the model no way to know which one is "I"
-  without this line, and single-player-per-session was already an
-  implicit assumption everywhere else in the design.
+  without this line. The type is `string | null` rather than `string` —
+  not an unused placeholder, the `null` branch is real and exercised
+  (told to the model as "no character is assigned to this user yet; treat
+  their messages as out-of-character/meta") — this is the seam a future
+  multi-user mode would attach a real per-user assignment to, without any
+  of today's single-user callers needing to change; today `io/`/`server/`
+  always pass a real id, so the beta's behavior is unchanged.
 - **`timeline/`** (`src/timeline/index.ts`) — a real-wall-clock-anchored
   counter, deliberately separate from the turn-based `dtm` timestamp above
   (which counts player inputs, not elapsed time). `createTimeline(now =
@@ -1017,7 +1024,18 @@ loaded model in this environment; only the deterministic code around it
 - Bounded check-tool-call loop (the `X` cap in Turn Flow) — not enforced in
   the beta `ai/` implementation, see Beta Implementation above
 - `mode` / `playerCharacterId` on `ExperienceSchema` — beta resolves player
-  identification via a CLI arg instead, see Beta Implementation above
+  identification via a CLI arg / `server/` config instead, see Beta
+  Implementation above. `EngineOptions.playerCharacterId` being `string |
+  null` (rather than a bare `string`) is deliberate groundwork for this:
+  a future multi-user mode would route several connected users, each
+  independently tied to a characterId or `null` (unassigned — e.g. a
+  spectator, or someone who hasn't picked a character yet), through that
+  same null-aware system-prompt branch. What's still undesigned and NOT
+  built: actual multi-user session routing itself — concurrent per-user
+  turns against one `Engine`/`Dtm`, whether that's one `Engine` handling
+  several users or several `Engine`s sharing a `Dtm`, and how per-user
+  identity is authenticated/assigned in the first place. Today's beta is
+  still exactly one connected user per `Engine` process.
 - Tier 2–5 specialized-model splits and the SAL/MML loading strategies —
   beta only implements Tier 1 (single model)
 - Data file format for Ruleset/other Experience content (world data uses
