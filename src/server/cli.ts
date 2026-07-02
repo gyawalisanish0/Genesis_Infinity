@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { startServer } from "./index.js";
+import { KNOWN_API_PROVIDERS, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
 
 /**
  * Entry point for the always-on API server deployment (see
@@ -8,9 +9,10 @@ import { startServer } from "./index.js";
  * container. The server boots with no model loaded — the frontend picks
  * a backend/model at runtime via POST /api/backend (see server/index.ts,
  * server/modelCatalogue.ts) — so BACKEND/MODEL_PATH/API_MODEL are no
- * longer read here. API_BASE_URL/API_KEY, if both set, become the
- * server-side-only credentials the frontend's "api" backend choice uses;
- * the frontend only ever supplies a model id, never the credential.
+ * longer read here. Each known API provider (apiProviders.ts) has its own
+ * API-key env var; a provider with no key set is simply unavailable to
+ * the frontend's "api" backend picker. The frontend only ever supplies a
+ * provider id + model string, never a credential.
  */
 async function main(): Promise<void> {
   const experienceDir = process.env.EXPERIENCE_DIR ?? "examples/goku-vs-venom";
@@ -26,14 +28,18 @@ async function main(): Promise<void> {
     );
   }
 
-  const apiBaseUrl = process.env.API_BASE_URL;
-  const apiCredential = process.env.API_KEY;
-  const apiBackendDefaults =
-    apiBaseUrl && apiCredential ? { baseURL: apiBaseUrl, apiKey: apiCredential } : undefined;
-  if (!apiBackendDefaults) {
+  const apiProviders: Partial<Record<ApiProviderId, ConfiguredApiProvider>> = {};
+  for (const id of Object.keys(KNOWN_API_PROVIDERS) as ApiProviderId[]) {
+    const providerKey = process.env[KNOWN_API_PROVIDERS[id].envVar];
+    if (providerKey) apiProviders[id] = { baseURL: KNOWN_API_PROVIDERS[id].baseURL, apiKey: providerKey };
+  }
+  if (Object.keys(apiProviders).length === 0) {
+    const envVars = Object.values(KNOWN_API_PROVIDERS)
+      .map((p) => p.envVar)
+      .join(", ");
     console.warn(
-      "[server] API_BASE_URL/API_KEY not set — the frontend's \"api\" backend option won't be available " +
-        "until they're configured (local GGUF models via the frontend's picker still work).",
+      `[server] No API provider keys set (${envVars}) — the frontend's "api" backend tab will show no ` +
+        "providers (local GGUF models via the frontend's picker still work).",
     );
   }
 
@@ -44,7 +50,7 @@ async function main(): Promise<void> {
     port,
     apiKey,
     corsOrigin,
-    apiBackendDefaults,
+    apiProviders,
     modelsDir: process.env.MODELS_DIR ?? "models",
   });
 }

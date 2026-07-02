@@ -5,6 +5,7 @@ import { getState } from "../state/index.js";
 import { getScope } from "../scope/index.js";
 import type { BackendConfig } from "../ai/index.js";
 import { searchGgufModels, listGgufFiles, downloadGgufModel } from "./modelCatalogue.js";
+import { KNOWN_API_PROVIDERS, isKnownApiProvider, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
 
 export interface ServerOptions {
   experienceDir: string;
@@ -22,12 +23,14 @@ export interface ServerOptions {
   /** Allowed CORS origin (e.g. the GitHub Pages URL serving frontend/). "*" allows any origin. */
   corsOrigin: string;
   /**
-   * Server-side-only credentials for the "api" backend. The frontend's
-   * model picker only ever sends a `model` id string — baseURL/apiKey stay
+   * Server-side-only credentials for the "api" backend, one per known
+   * provider (see apiProviders.ts). The frontend's model picker only ever
+   * sends a provider id + `model` string — the actual baseURL/apiKey stay
    * on the server and are never accepted from or echoed to a request, so
    * the real credential can't leak through the browser or its network tab.
+   * A provider absent from this map is simply unavailable to the frontend.
    */
-  apiBackendDefaults?: { baseURL: string; apiKey: string };
+  apiProviders?: Partial<Record<ApiProviderId, ConfiguredApiProvider>>;
   /** Where downloaded GGUF files are cached. Defaults to "models". */
   modelsDir?: string;
 }
@@ -41,7 +44,10 @@ export type BackendStatus =
   | { status: "idle" }
   | { status: "downloading"; repoId: string; filename: string }
   | { status: "starting" }
-  | { status: "ready"; backend: { type: "llamaCpp"; modelPath: string } | { type: "api"; model: string } }
+  | {
+      status: "ready";
+      backend: { type: "llamaCpp"; modelPath: string } | { type: "api"; provider: ApiProviderId; model: string };
+    }
   | { status: "error"; message: string };
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -156,6 +162,15 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/api/backend/providers") {
+        const configured = (Object.keys(KNOWN_API_PROVIDERS) as ApiProviderId[])
+          .filter((id) => options.apiProviders?.[id])
+          .map((id) => ({ id, label: KNOWN_API_PROVIDERS[id].label }));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(configured));
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/api/models/search") {
         const query = url.searchParams.get("q") ?? "";
         const results = await searchGgufModels(query);
@@ -176,7 +191,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       if (req.method === "POST" && url.pathname === "/api/backend") {
         const body = (await readJsonBody(req)) as
           | { type: "llamaCpp"; repoId: string; filename: string }
-          | { type: "api"; model: string };
+          | { type: "api"; provider: string; model: string };
 
         // Reject overlapping switches rather than letting two downloads race
         // to write the same modelsDir path — observed in practice as a
@@ -213,19 +228,29 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         }
 
         if (body.type === "api") {
-          if (typeof body.model !== "string" || body.model.trim() === "") {
+          if (typeof body.model !== "string" || body.model.trim() === "" || typeof body.provider !== "string") {
             res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Request body must be { type: \"api\", model }" }));
+            res.end(JSON.stringify({ error: "Request body must be { type: \"api\", provider, model }" }));
             return;
           }
-          if (!options.apiBackendDefaults) {
+          if (!isKnownApiProvider(body.provider)) {
             res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "This server has no api backend credentials configured" }));
+            res.end(JSON.stringify({ error: `Unknown provider "${body.provider}"` }));
+            return;
+          }
+          const provider = body.provider;
+          const configured = options.apiProviders?.[provider];
+          if (!configured) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: `Provider "${provider}" has no API key configured on this server` }));
             return;
           }
           const model = body.model;
-          const { baseURL, apiKey } = options.apiBackendDefaults;
-          void setBackend({ type: "api", baseURL, apiKey, model }, { status: "ready", backend: { type: "api", model } });
+          const { baseURL, apiKey } = configured;
+          void setBackend(
+            { type: "api", baseURL, apiKey, model },
+            { status: "ready", backend: { type: "api", provider, model } },
+          );
           res.writeHead(202, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ status: "starting" }));
           return;

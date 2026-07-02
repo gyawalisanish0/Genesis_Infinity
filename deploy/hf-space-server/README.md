@@ -22,8 +22,15 @@ Configure via this Space's **Settings → Repository secrets**:
 |---|---|
 | `SERVER_API_KEY` | A shared secret the frontend must send back. **Required for any real deployment** — without it, anyone with this Space's URL can drive turns on your account's quota, or trigger model downloads. |
 | `CORS_ORIGIN` | The GitHub Pages origin allowed to call this API (e.g. `https://<user>.github.io`) |
-| `API_BASE_URL` | Optional. e.g. `https://router.huggingface.co/v1` — only needed to make the frontend's "API" model option available. |
-| `API_KEY` | Optional, required together with `API_BASE_URL`. Your Hugging Face access token (or other provider's key) — stays server-side only; the frontend only ever sends a model id, never this key. |
+| `HF_API_KEY` | Optional. A Hugging Face access token — enables "Hugging Face" as an API provider option in the frontend's model picker. |
+| `OPENROUTER_API_KEY` | Optional. An OpenRouter API key — enables "OpenRouter" as an API provider option. |
+
+Each API provider is enabled independently by setting its key — set one, both,
+or neither (local GGUF models via the frontend's picker work either way). The
+frontend only ever sends a provider id + model id string; the actual key never
+leaves the server. See `src/server/apiProviders.ts` for the full provider
+registry — adding a new provider there (base URL + a new key env var) makes it
+available to every deployment without any frontend changes.
 
 Optional: `EXPERIENCE_DIR` (defaults to `examples/goku-vs-venom`), `CHARACTER_ID`
 (defaults to `goku`), `MODELS_DIR` (defaults to `models` — where a
@@ -34,7 +41,6 @@ inactivity, which works against "always-on" serving. If this becomes a
 problem in practice, a paid always-on tier (or another host entirely) may
 be worth revisiting.
 
-This Space's contents are synced automatically from the
-`claude/claude-md-docs-i19au3` branch of the Genesis Infinity GitHub repo
-by `.github/workflows/sync-hf-space-server.yml` — do not edit files here
-directly, they'll be overwritten on the next push.
+This Space's contents are synced automatically from the `main` branch of
+the Genesis Infinity GitHub repo by `.github/workflows/sync-hf-space-server.yml`
+— do not edit files here directly, they'll be overwritten on the next push.
