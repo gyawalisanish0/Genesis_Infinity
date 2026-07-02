@@ -2,7 +2,7 @@ name: Deploy frontend to GitHub Pages
 
 on:
   push:
-    branches: [claude/claude-md-docs-i19au3]
+    branches: [main]
     paths:
       - "frontend/**"
       - ".github/workflows/deploy-pages.yml"
