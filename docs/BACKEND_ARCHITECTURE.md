@@ -829,9 +829,14 @@ design above for beta scope.
     Hugging Face Hub's public models API directly, no auth needed) so the
     frontend can browse the live GGUF catalogue without embedding any Hub
     credential client-side.
+  - `GET /api/backend/providers` — which API providers (see
+    `apiProviders.ts` below) are actually configured on this server, as
+    `{id, label}[]` — never the base URL or key. Drives the frontend's
+    provider `<select>`, and lets it show "no providers configured" if
+    the list comes back empty.
   - `POST /api/backend` — `{type: "llamaCpp", repoId, filename}` or
-    `{type: "api", model}`. Rejects with `409` if a switch is already
-    `downloading`/`starting` — a real HF Space session showed two
+    `{type: "api", provider, model}`. Rejects with `409` if a switch is
+    already `downloading`/`starting` — a real HF Space session showed two
     overlapping requests (from a frontend double-tap) racing to write the
     same `modelsDir` path, corrupting the GGUF (a tensor ending up
     truncated mid-file); this guard, plus a matching client-side
@@ -840,17 +845,18 @@ design above for beta scope.
     `MAX_MODEL_BYTES` = 6GB via a HEAD request's `Content-Length`;
     deletes any previously-cached `.gguf` in `modelsDir` first — only one
     local model is kept on disk at a time) then swaps the `Engine` onto
-    the new `LlamaCppBackendConfig`. For `api`, swaps onto the server's
-    own `apiBackendDefaults.baseURL`/`apiKey` plus the frontend-supplied
-    `model` string only — **the real credential is a server-side-only
-    secret, sourced from `API_BASE_URL`/`API_KEY` env vars, and is never
+    the new `LlamaCppBackendConfig`. For `api`, looks `provider` up in
+    `options.apiProviders` (rejecting with `400` if that provider isn't a
+    known id or has no key configured) and swaps onto its
+    `baseURL`/`apiKey` plus the frontend-supplied `model` string only —
+    **the real credential is a server-side-only secret, and is never
     accepted from or echoed back to a request; the frontend can only ever
-    choose which model id to use against it.** Responds `202` immediately
-    (a download/model-load can take minutes) — the frontend polls
-    `/api/backend/status` rather than blocking on this call. `/api/scope`
-    and `/api/turn` are gated on `status.status === "ready"`, returning
-    `409` otherwise so the frontend knows to prompt for a model instead of
-    treating it as a hard connection error.
+    choose which provider and model id to use.** Responds `202`
+    immediately (a download/model-load can take minutes) — the frontend
+    polls `/api/backend/status` rather than blocking on this call.
+    `/api/scope` and `/api/turn` are gated on `status.status === "ready"`,
+    returning `409` otherwise so the frontend knows to prompt for a model
+    instead of treating it as a hard connection error.
   - `POST /api/backend/unload` — disposes the current `Engine` (freeing
     the loaded model's RAM) and returns `status` to `idle`, without
     touching `modelsDir` — a previously-downloaded GGUF stays cached on
@@ -865,11 +871,20 @@ design above for beta scope.
   `server/cli.ts` prints a startup warning if it's left unset. `cli.ts`
   reads its entire configuration from environment variables (not CLI
   flags, since it's meant to run unattended in a container — see
-  `deploy/hf-space-server/`); `API_BASE_URL`/`API_KEY`, if both set,
-  become `apiBackendDefaults` (the `api` backend option is simply
-  unavailable to the frontend if they're not configured). `BACKEND` /
-  `MODEL_PATH` / `API_MODEL` env vars from the pre-runtime-picker design
-  are gone — model choice no longer belongs at deploy time.
+  `deploy/hf-space-server/`). `BACKEND` / `MODEL_PATH` / `API_MODEL` env
+  vars from the pre-runtime-picker design are gone — model choice no
+  longer belongs at deploy time.
+- **`server/apiProviders.ts`** — a small hardcoded registry of known
+  OpenAI-compatible API providers (`apiDriver.ts` is generic enough to
+  talk to any of them with no provider-specific code): currently
+  `huggingface` (`https://router.huggingface.co/v1`) and `openrouter`
+  (`https://openrouter.ai/api/v1`), each with a public base URL baked in
+  plus one API-key env var (`HF_API_KEY`, `OPENROUTER_API_KEY`). `cli.ts`
+  builds `ServerOptions.apiProviders` by checking each provider's env var
+  independently — a provider with no key set is simply absent from the
+  map and won't appear in the frontend's picker. Adding a new provider
+  later is one entry in this file plus a new secret, no frontend changes
+  needed (it's discovered automatically via `GET /api/backend/providers`).
 - **`frontend/`** — the static web UI that drives `server/`'s API from a
   browser. See `docs/FRONTEND_ARCHITECTURE.md` for its design.
 

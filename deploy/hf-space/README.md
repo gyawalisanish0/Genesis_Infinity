@@ -17,7 +17,6 @@ example Experience. Output is visible in this Space's container logs —
 there is no interactive UI. The HTTP endpoint on port 7860 only exists to
 satisfy the Space's health check.
 
-This Space's contents are synced automatically from the
-`claude/claude-md-docs-i19au3` branch of the Genesis Infinity GitHub repo
-by `.github/workflows/sync-hf-space.yml` — do not edit files here directly,
-they'll be overwritten on the next push.
+This Space's contents are synced automatically from the `main` branch of
+the Genesis Infinity GitHub repo by `.github/workflows/sync-hf-space.yml`
+— do not edit files here directly, they'll be overwritten on the next push.

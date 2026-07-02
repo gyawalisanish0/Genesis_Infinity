@@ -32,7 +32,9 @@ const el = {
   modelSelectedRepo: document.getElementById("model-selected-repo"),
   modelFileResults: document.getElementById("model-file-results"),
   modelApiForm: document.getElementById("model-api-form"),
+  modelApiProvider: document.getElementById("model-api-provider"),
   modelApiInput: document.getElementById("model-api-input"),
+  modelApiNone: document.getElementById("model-api-none"),
   modelProfilesList: document.getElementById("model-profiles-list"),
   modelUnloadBtn: document.getElementById("model-unload-btn"),
   sidebarEmpty: document.getElementById("sidebar-empty"),
@@ -73,7 +75,9 @@ function sanitizeFilename(filename) {
 }
 
 function profileId(profile) {
-  return profile.type === "llamaCpp" ? `llamaCpp:${profile.repoId}/${profile.filename}` : `api:${profile.model}`;
+  return profile.type === "llamaCpp"
+    ? `llamaCpp:${profile.repoId}/${profile.filename}`
+    : `api:${profile.provider}:${profile.model}`;
 }
 
 function loadProfiles() {
@@ -125,7 +129,9 @@ function describeBackendStatus(status) {
     case "starting":
       return "Starting…";
     case "ready":
-      return status.backend.type === "llamaCpp" ? status.backend.modelPath.split("/").pop() : status.backend.model;
+      return status.backend.type === "llamaCpp"
+        ? status.backend.modelPath.split("/").pop()
+        : `${status.backend.provider}: ${status.backend.model}`;
     case "error":
       return "Model error";
   }
@@ -178,7 +184,12 @@ function recordProfileFromStatus(status) {
       });
     }
   } else if (status.backend.type === "api") {
-    upsertProfile({ type: "api", model: status.backend.model, displayName: status.backend.model });
+    upsertProfile({
+      type: "api",
+      provider: status.backend.provider,
+      model: status.backend.model,
+      displayName: `${status.backend.provider}: ${status.backend.model}`,
+    });
   }
   pendingLocalRepo = null;
 }
@@ -188,7 +199,7 @@ function isProfileActive(profile, status) {
   if (profile.type === "llamaCpp") {
     return status.backend.type === "llamaCpp" && status.backend.modelPath.endsWith(sanitizeFilename(profile.filename));
   }
-  return status.backend.type === "api" && status.backend.model === profile.model;
+  return status.backend.type === "api" && status.backend.provider === profile.provider && status.backend.model === profile.model;
 }
 
 function renderProfiles(status) {
@@ -226,7 +237,7 @@ function renderProfiles(status) {
     li.append(label, removeBtn);
     li.addEventListener("click", () => {
       if (profile.type === "llamaCpp") loadLocalModel(profile.repoId, profile.filename);
-      else useApiModel(profile.model);
+      else useApiModel(profile.provider, profile.model);
     });
     el.modelProfilesList.appendChild(li);
   }
@@ -363,6 +374,28 @@ function switchBackendTab(backend) {
   el.tabApi.classList.toggle("active", backend === "api");
   el.panelLocal.classList.toggle("hidden", backend !== "llamaCpp");
   el.panelApi.classList.toggle("hidden", backend !== "api");
+  if (backend === "api") loadApiProviders();
+}
+
+async function loadApiProviders() {
+  let providers = [];
+  try {
+    providers = await apiFetch("/api/backend/providers");
+  } catch {
+    providers = [];
+  }
+  el.modelApiProvider.innerHTML = "";
+  for (const provider of providers) {
+    const option = document.createElement("option");
+    option.value = provider.id;
+    option.textContent = provider.label;
+    el.modelApiProvider.appendChild(option);
+  }
+  const hasProviders = providers.length > 0;
+  el.modelApiNone.classList.toggle("hidden", hasProviders);
+  el.modelApiProvider.disabled = !hasProviders;
+  el.modelApiInput.disabled = !hasProviders;
+  el.modelApiForm.querySelector("button[type=submit]").disabled = !hasProviders;
 }
 
 function renderSearchResults(results) {
@@ -424,14 +457,14 @@ async function loadLocalModel(repoId, filename) {
   }
 }
 
-async function useApiModel(model) {
-  if (!model || modelSwitchInFlight) return;
+async function useApiModel(provider, model) {
+  if (!provider || !model || modelSwitchInFlight) return;
   modelSwitchInFlight = true;
   try {
     await apiFetch("/api/backend", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "api", model }),
+      body: JSON.stringify({ type: "api", provider, model }),
     });
     pollBackendStatus();
   } catch (error) {
@@ -467,7 +500,7 @@ el.modelSearchForm.addEventListener("submit", async (event) => {
 
 el.modelApiForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  useApiModel(el.modelApiInput.value.trim());
+  useApiModel(el.modelApiProvider.value, el.modelApiInput.value.trim());
 });
 
 el.modelUnloadBtn.addEventListener("click", unloadModel);

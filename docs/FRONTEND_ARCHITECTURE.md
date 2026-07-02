@@ -65,8 +65,8 @@ loaded model without picking a replacement.
 **Saved model profiles.** Every model that successfully reaches `"ready"`
 (local GGUF or API) is auto-saved to `localStorage`
 (`genesis-infinity-model-profiles`) — a profile is `{type, displayName,
-repoId+filename | model, lastUsed}`, keyed so reloading the same model
-updates its `lastUsed` rather than duplicating the entry. Saved per
+repoId+filename | provider+model, lastUsed}`, keyed so reloading the same
+model updates its `lastUsed` rather than duplicating the entry. Saved per
 browser/device, same as connection settings — there's no server-side
 profile storage. The list (`#model-profiles-list`) shows each profile
 with a type badge ("Local"/"API"), highlights whichever one matches the
@@ -86,10 +86,15 @@ through identical code). A `llamaCpp` profile is only recorded once
   `{type: "llamaCpp", repoId, filename}` to `POST /api/backend` on file
   click. The server owns the actual download/disk-cap policy; the
   frontend only ever displays progress via status polling.
-- **API tab** — posts `{type: "api", model}` for a typed model id. The
-  frontend never collects or transmits an actual API credential (base
-  URL / key) — only ever a model id string — since that credential is a
-  server-side-only secret (see `docs/BACKEND_ARCHITECTURE.md`).
+- **API tab** — fetches `GET /api/backend/providers` (on tab switch) to
+  populate a provider `<select>` with only the providers this server
+  actually has a key for; shows "no API providers configured" and
+  disables the form if that list is empty. Posts
+  `{type: "api", provider, model}` for the chosen provider id and a typed
+  model id. The frontend never collects or transmits an actual API
+  credential (base URL / key) for any provider — only ever a provider id
+  and a model id string — since those credentials are server-side-only
+  secrets, one per provider (see `docs/BACKEND_ARCHITECTURE.md`).
 
 Both the local-file click and the API-form submit (and reloading a saved
 profile) go through a `modelSwitchInFlight` guard so a double-tap can't

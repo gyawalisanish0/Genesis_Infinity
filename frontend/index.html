@@ -126,7 +126,12 @@
     </div>
 
     <div id="panel-api" class="hidden">
+      <p class="muted small hidden" id="model-api-none">No API providers are configured on this server.</p>
       <form id="model-api-form">
+        <label>
+          Provider
+          <select id="model-api-provider" required></select>
+        </label>
         <label>
           Model id
           <input id="model-api-input" type="text" placeholder="e.g. meta-llama/Llama-3.1-8B-Instruct" required />

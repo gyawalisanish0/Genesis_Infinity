@@ -428,7 +428,8 @@ dialog label {
   margin-bottom: 12px;
 }
 
-dialog input {
+dialog input,
+dialog select {
   display: block;
   width: 100%;
   margin-top: 4px;
