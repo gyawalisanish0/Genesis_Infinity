@@ -153,6 +153,24 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
     return result;
   }
 
+  // Grammar-constrained backends (see llamaCppDriver.ts) sample tool-call
+  // arguments token-by-token against each parameter's JSON Schema. A bare
+  // `{ type: "string" }` lets that sampling produce anything at all — the
+  // observed failure mode was a 3B model emitting a characterId like
+  // "goku}}; {" that's syntactically valid JSON but semantically garbage.
+  // Enumerating the real, currently-valid ids for every id-shaped field
+  // makes that class of output physically unreachable for a
+  // grammar-constrained model, and is a harmless hint (not enforced, but
+  // not harmful either) for API backends that don't grammar-constrain.
+  const characterIds = options.toolCtx.loaded.characters.map((c) => c.id);
+  const nodeIds = options.toolCtx.world.regions.flatMap((r) => r.nodes.map((n) => n.id));
+  const techniqueIds = Array.from(
+    new Set(options.toolCtx.loaded.characters.flatMap((c) => c.techniques.map((t) => t.id))),
+  );
+  const itemIds = options.toolCtx.loaded.ruleset.items.map((i) => i.id);
+  const optionalCharacterTarget = [...characterIds, ""];
+  const optionalItemTarget = [...itemIds, ""];
+
   const tools: ToolDef[] = [
     {
       name: "get_scope",
@@ -162,7 +180,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         "(quantities remaining, what's equipped), and who else is present.",
       parameters: {
         type: "object",
-        properties: { characterId: { type: "string" } },
+        properties: { characterId: { type: "string", enum: characterIds } },
       },
       handler: (params) =>
         record(
@@ -176,7 +194,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       description: "Get a character's static sheet: identity, abilities, skills, and known techniques.",
       parameters: {
         type: "object",
-        properties: { characterId: { type: "string" } },
+        properties: { characterId: { type: "string", enum: characterIds } },
       },
       handler: (params) =>
         record(
@@ -203,10 +221,11 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       parameters: {
         type: "object",
         properties: {
-          characterId: { type: "string" },
+          characterId: { type: "string", enum: characterIds },
           message: { type: "string" },
           targetId: {
             type: "string",
+            enum: optionalCharacterTarget,
             description: "Character being spoken to, or an empty string if said to no one in particular.",
           },
         },
@@ -231,7 +250,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       parameters: {
         type: "object",
         properties: {
-          characterId: { type: "string" },
+          characterId: { type: "string", enum: characterIds },
           description: { type: "string" },
         },
       },
@@ -263,18 +282,19 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
             type: "object",
             properties: {
               type: { const: "move" },
-              characterId: { type: "string" },
-              targetNodeId: { type: "string" },
+              characterId: { type: "string", enum: characterIds },
+              targetNodeId: { type: "string", enum: nodeIds },
             },
           },
           {
             type: "object",
             properties: {
               type: { const: "use_technique" },
-              characterId: { type: "string" },
-              techniqueId: { type: "string" },
+              characterId: { type: "string", enum: characterIds },
+              techniqueId: { type: "string", enum: techniqueIds },
               targetId: {
                 type: "string",
+                enum: optionalCharacterTarget,
                 description: "Target character's id, or an empty string if untargeted.",
               },
             },
@@ -283,17 +303,19 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
             type: "object",
             properties: {
               type: { const: "interact" },
-              characterId: { type: "string" },
+              characterId: { type: "string", enum: characterIds },
               description: {
                 type: "string",
                 description: "Free-form description of what the character is attempting.",
               },
               targetId: {
                 type: "string",
+                enum: optionalCharacterTarget,
                 description: "Target character's id, or an empty string if untargeted.",
               },
               itemId: {
                 type: "string",
+                enum: optionalItemTarget,
                 description:
                   "Id of a carried item being used or equipped, or an empty string if none.",
               },
