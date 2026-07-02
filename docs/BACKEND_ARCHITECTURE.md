@@ -830,8 +830,13 @@ design above for beta scope.
     frontend can browse the live GGUF catalogue without embedding any Hub
     credential client-side.
   - `POST /api/backend` — `{type: "llamaCpp", repoId, filename}` or
-    `{type: "api", model}`. For `llamaCpp`, kicks off
-    `modelCatalogue.ts`'s `downloadGgufModel` (capped at
+    `{type: "api", model}`. Rejects with `409` if a switch is already
+    `downloading`/`starting` — a real HF Space session showed two
+    overlapping requests (from a frontend double-tap) racing to write the
+    same `modelsDir` path, corrupting the GGUF (a tensor ending up
+    truncated mid-file); this guard, plus a matching client-side
+    in-flight guard in `frontend/app.js`, closes that. For `llamaCpp`,
+    kicks off `modelCatalogue.ts`'s `downloadGgufModel` (capped at
     `MAX_MODEL_BYTES` = 6GB via a HEAD request's `Content-Length`;
     deletes any previously-cached `.gguf` in `modelsDir` first — only one
     local model is kept on disk at a time) then swaps the `Engine` onto
@@ -846,6 +851,11 @@ design above for beta scope.
     and `/api/turn` are gated on `status.status === "ready"`, returning
     `409` otherwise so the frontend knows to prompt for a model instead of
     treating it as a hard connection error.
+  - `POST /api/backend/unload` — disposes the current `Engine` (freeing
+    the loaded model's RAM) and returns `status` to `idle`, without
+    touching `modelsDir` — a previously-downloaded GGUF stays cached on
+    disk so reloading the same model later skips the download. Also
+    `409`s if a switch is mid-flight, for the same reason as above.
   All routes set CORS headers for a single configured `corsOrigin` (the
   GitHub Pages origin), and everything but `/api/health` is gated behind
   an `X-Api-Key` header checked against a `SERVER_API_KEY` — this is a

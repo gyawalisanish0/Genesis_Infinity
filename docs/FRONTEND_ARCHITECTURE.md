@@ -54,7 +54,31 @@ both the player's line and the returned narration to the message log.
 
 A separate "Model settings" `<dialog>`, opened from a topbar status
 button that shows the live model name/status (polled from
-`GET /api/backend/status`), is the runtime backend/model picker:
+`GET /api/backend/status`), is the runtime backend/model picker. It has
+three parts: an unload action, saved model profiles, and tabs for
+finding a new model.
+
+**Unload.** A button (`#model-unload-btn`, enabled only while a model is
+`"ready"`) posts to `POST /api/backend/unload`, freeing the server's
+loaded model without picking a replacement.
+
+**Saved model profiles.** Every model that successfully reaches `"ready"`
+(local GGUF or API) is auto-saved to `localStorage`
+(`genesis-infinity-model-profiles`) — a profile is `{type, displayName,
+repoId+filename | model, lastUsed}`, keyed so reloading the same model
+updates its `lastUsed` rather than duplicating the entry. Saved per
+browser/device, same as connection settings — there's no server-side
+profile storage. The list (`#model-profiles-list`) shows each profile
+with a type badge ("Local"/"API"), highlights whichever one matches the
+server's current `"ready"` backend, and offers a `×` to remove it
+(`removeProfile`) or a click anywhere else on the row to reload it
+(routed through the same `loadLocalModel`/`useApiModel` functions the
+search/API tabs use, so a saved profile and a freshly-found model go
+through identical code). A `llamaCpp` profile is only recorded once
+`GET /api/backend/status` actually reports `"ready"` with a matching
+`modelPath` — an attempt that errors out never gets saved.
+
+**Finding a new model:**
 
 - **Local GGUF tab** — searches `GET /api/models/search` (Hugging Face
   Hub's live GGUF-tagged catalogue), lists a chosen repo's files via
@@ -67,6 +91,11 @@ button that shows the live model name/status (polled from
   URL / key) — only ever a model id string — since that credential is a
   server-side-only secret (see `docs/BACKEND_ARCHITECTURE.md`).
 
-Errors from either tab are surfaced directly in the dialog's status line
-(`#model-dialog-status`) rather than the main chat log, since the user is
-already looking at the dialog when they happen.
+Both the local-file click and the API-form submit (and reloading a saved
+profile) go through a `modelSwitchInFlight` guard so a double-tap can't
+fire two overlapping `POST /api/backend` calls — the matching server-side
+`409` guard is the authoritative fix (see `docs/BACKEND_ARCHITECTURE.md`),
+this is the client-side half that stops the double-tap from happening at
+all. Errors from any of these are surfaced directly in the dialog's
+status line (`#model-dialog-status`) rather than the main chat log, since
+the user is already looking at the dialog when they happen.
