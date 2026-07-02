@@ -799,35 +799,64 @@ design above for beta scope.
     item below); `io/` takes `--character <id>` as a CLI argument instead,
     keeping this a runtime/session concern rather than Experience-authored
     data.
-- **`server/`** (`src/server/index.ts`, `src/server/cli.ts`) — an HTTP
-  bridge for `frontend/`'s web UI, since `core/`'s `Engine` was previously
-  only ever driven directly from `io/`'s stdin loop. `startServer(options)`
-  builds one `Engine` (same `createEngine` as `io/`) and keeps it resident
-  for the process lifetime — beta scope is explicitly **single-session**:
+- **`server/`** (`src/server/index.ts`, `src/server/cli.ts`,
+  `src/server/modelCatalogue.ts`) — an HTTP bridge for `frontend/`'s web
+  UI, since `core/`'s `Engine` was previously only ever driven directly
+  from `io/`'s stdin loop. Beta scope is explicitly **single-session**:
   one Engine, one player-controlled `characterId`, no accounts or
-  concurrent-session routing. A plain `node:http` server (no framework
-  dependency) exposes three routes:
+  concurrent-session routing. Unlike `io/`, the server does **not** build
+  its `Engine` at startup — backend/model choice is a runtime, frontend-driven
+  decision (the model picker described below), not a fixed deploy-time
+  environment variable, since the target user is on a phone with no local
+  dev environment and needs to pick/swap models from the browser. The
+  server boots holding `engine: Engine | null` and a `BackendStatus`
+  (`idle | downloading | starting | ready | error`); `POST /api/backend`
+  is what transitions it. A plain `node:http` server (no framework
+  dependency) exposes:
   - `GET /api/health` — `{status, experience}`, unauthenticated (so the
     frontend's initial connectivity check and any uptime probe don't need
-    the key).
-  - `GET /api/scope?characterId=X` — the same `Scope` `getScope` would
-    return to the model, reused as-is for the UI's stats/inventory panel
-    rather than defining a second shape.
-  - `POST /api/turn {input}` — calls `engine.takeTurn(input)`, returns
-    `{narration, scope}` (the post-turn scope bundled in the same response
-    so the frontend never has to make two round trips per turn).
-  All three set CORS headers for a single configured `corsOrigin` (the
-  GitHub Pages origin), and `/api/scope`/`/api/turn` are gated behind an
-  `X-Api-Key` header checked against a `SERVER_API_KEY` — this is a public
-  endpoint sitting in front of a real, cost-incurring model call, so even
+    the key). The experience name is read once via a standalone
+    `loadExperience` call at startup — independent of the (lazy) Engine —
+    so this works even before a model is chosen.
+  - `GET /api/backend/status` — the current `BackendStatus`, polled by the
+    frontend (every 3s) to drive its model-status indicator and to unlock
+    the composer the moment a swap finishes.
+  - `GET /api/models/search?q=` / `GET /api/models/:repoId/files` — proxy
+    `modelCatalogue.ts`'s `searchGgufModels`/`listGgufFiles` (both call
+    Hugging Face Hub's public models API directly, no auth needed) so the
+    frontend can browse the live GGUF catalogue without embedding any Hub
+    credential client-side.
+  - `POST /api/backend` — `{type: "llamaCpp", repoId, filename}` or
+    `{type: "api", model}`. For `llamaCpp`, kicks off
+    `modelCatalogue.ts`'s `downloadGgufModel` (capped at
+    `MAX_MODEL_BYTES` = 6GB via a HEAD request's `Content-Length`;
+    deletes any previously-cached `.gguf` in `modelsDir` first — only one
+    local model is kept on disk at a time) then swaps the `Engine` onto
+    the new `LlamaCppBackendConfig`. For `api`, swaps onto the server's
+    own `apiBackendDefaults.baseURL`/`apiKey` plus the frontend-supplied
+    `model` string only — **the real credential is a server-side-only
+    secret, sourced from `API_BASE_URL`/`API_KEY` env vars, and is never
+    accepted from or echoed back to a request; the frontend can only ever
+    choose which model id to use against it.** Responds `202` immediately
+    (a download/model-load can take minutes) — the frontend polls
+    `/api/backend/status` rather than blocking on this call. `/api/scope`
+    and `/api/turn` are gated on `status.status === "ready"`, returning
+    `409` otherwise so the frontend knows to prompt for a model instead of
+    treating it as a hard connection error.
+  All routes set CORS headers for a single configured `corsOrigin` (the
+  GitHub Pages origin), and everything but `/api/health` is gated behind
+  an `X-Api-Key` header checked against a `SERVER_API_KEY` — this is a
+  public endpoint sitting in front of a real, cost-incurring model call
+  (and, for `llamaCpp`, a multi-GB download trigger), so even
   single-session beta ships with a shared-secret gate rather than none;
   `server/cli.ts` prints a startup warning if it's left unset. `cli.ts`
   reads its entire configuration from environment variables (not CLI
   flags, since it's meant to run unattended in a container — see
-  `deploy/hf-space-server/`) and defaults to the `api` `LlmDriver` backend
-  rather than `llamaCpp`, since this deployment is meant to be a
-  lightweight, always-listening process, not one carrying a multi-GB local
-  model.
+  `deploy/hf-space-server/`); `API_BASE_URL`/`API_KEY`, if both set,
+  become `apiBackendDefaults` (the `api` backend option is simply
+  unavailable to the frontend if they're not configured). `BACKEND` /
+  `MODEL_PATH` / `API_MODEL` env vars from the pre-runtime-picker design
+  are gone — model choice no longer belongs at deploy time.
 - **`frontend/`** (`frontend/index.html`, `style.css`, `app.js`) — a
   small static single-page UI, plain HTML/CSS/JS with no build step and no
   framework dependency, styled dark and chat-like in the spirit of
@@ -837,14 +866,24 @@ design above for beta scope.
   built around generic chat rather than game-specific UI, with an ongoing
   upstream-merge tax). Connection settings (API base URL, shared secret,
   character id) are entered once via a `<dialog>` and cached in
-  `localStorage`. On connect, it calls `/api/health` then `/api/scope` and
-  renders a stats sidebar (HP as a severity-colored meter — green above
-  50%, amber above 25%, red below; armor class as a plain stat tile;
-  location, inventory, and who else is present) that collapses below the
-  chat log on narrow (phone) viewports rather than beside it. Submitting
-  the composer posts to `/api/turn` and appends both the player's line and
-  the returned narration to the message log, then re-renders the sidebar
-  from the response's bundled `scope`.
+  `localStorage`. On connect, it calls `/api/health` and starts polling
+  `/api/backend/status`; the composer stays disabled until status is
+  `"ready"`, at which point it fetches `/api/scope` and renders the stats
+  sidebar (HP as a severity-colored meter — green above 50%, amber above
+  25%, red below; armor class as a plain stat tile; location, inventory,
+  and who else is present), which collapses below the chat log on narrow
+  (phone) viewports rather than beside it. Submitting the composer posts
+  to `/api/turn` and appends both the player's line and the returned
+  narration to the message log, then re-renders the sidebar from the
+  response's bundled `scope`.
+  A separate "Model settings" `<dialog>` (opened from a topbar status
+  button showing the live model name/status) is the runtime backend/model
+  picker: a "Local GGUF" tab searches `/api/models/search`, lists a
+  chosen repo's files via `/api/models/:repoId/files`, and posts
+  `{type: "llamaCpp", repoId, filename}` to `/api/backend` on file click;
+  an "API" tab posts `{type: "api", model}` for a typed model id — the
+  frontend never collects or transmits an actual API credential, only
+  ever a model id string, per the server-side-only-secret design above.
 
 ### Test Experience: Goku vs Venom — Null Void Showdown
 

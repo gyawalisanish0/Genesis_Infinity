@@ -13,7 +13,13 @@
         <span class="dot" id="status-dot"></span>
         <span id="experience-name">Genesis Infinity</span>
       </div>
-      <button id="settings-btn" class="icon-btn" title="Connection settings" aria-label="Connection settings">⚙</button>
+      <div class="topbar-actions">
+        <button id="model-btn" class="model-status-btn" title="Model settings">
+          <span class="dot" id="model-dot"></span>
+          <span id="model-status-text">No model</span>
+        </button>
+        <button id="settings-btn" class="icon-btn" title="Connection settings" aria-label="Connection settings">⚙</button>
+      </div>
     </header>
 
     <main class="layout">
@@ -84,6 +90,49 @@
         <button type="submit">Connect</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="model-dialog">
+    <h2>Model settings</h2>
+    <p class="muted small" id="model-dialog-status">Status: —</p>
+
+    <div class="backend-tabs">
+      <button type="button" class="backend-tab active" id="tab-local" data-backend="llamaCpp">Local GGUF</button>
+      <button type="button" class="backend-tab" id="tab-api" data-backend="api">API</button>
+    </div>
+
+    <div id="panel-local">
+      <form id="model-search-form">
+        <label>
+          Search Hugging Face for a GGUF model
+          <input id="model-search-input" type="text" placeholder="e.g. llama-3.2-3b-instruct" />
+        </label>
+        <div class="dialog-actions">
+          <button type="submit">Search</button>
+        </div>
+      </form>
+      <ul id="model-search-results" class="plain-list selectable"></ul>
+      <div id="model-file-section" class="hidden">
+        <h3>Files in <span id="model-selected-repo"></span></h3>
+        <ul id="model-file-results" class="plain-list selectable"></ul>
+      </div>
+    </div>
+
+    <div id="panel-api" class="hidden">
+      <form id="model-api-form">
+        <label>
+          Model id
+          <input id="model-api-input" type="text" placeholder="e.g. meta-llama/Llama-3.1-8B-Instruct" required />
+        </label>
+        <div class="dialog-actions">
+          <button type="submit">Use model</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="dialog-actions">
+      <button type="button" id="model-dialog-close">Close</button>
+    </div>
   </dialog>
 
   <script src="app.js"></script>

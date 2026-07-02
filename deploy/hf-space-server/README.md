@@ -11,23 +11,23 @@ pinned: false
 # Genesis Infinity — live API server
 
 Runs Genesis Infinity's HTTP API (`src/server/`) persistently, backing the
-static frontend hosted on GitHub Pages. Uses the `api` `LlmDriver` backend
-(Hugging Face Inference Providers by default) rather than a local model, so
-this Space stays lightweight — no multi-GB GGUF download, unlike
-`genesis-infinity-cpu-test`.
+static frontend hosted on GitHub Pages. The server boots with **no model
+loaded** — backend/model choice is made live from the frontend's "Model
+settings" dialog (a local GGUF searched/downloaded from Hugging Face Hub,
+or an API model id), not fixed by this Space's configuration.
 
 Configure via this Space's **Settings → Repository secrets**:
 
 | Secret | Meaning |
 |---|---|
-| `API_BASE_URL` | e.g. `https://router.huggingface.co/v1` |
-| `API_KEY` | Your Hugging Face access token (or other provider's key) |
-| `API_MODEL` | The model id to use |
-| `SERVER_API_KEY` | A shared secret the frontend must send back. **Required for any real deployment** — without it, anyone with this Space's URL can drive turns on your account's quota. |
+| `SERVER_API_KEY` | A shared secret the frontend must send back. **Required for any real deployment** — without it, anyone with this Space's URL can drive turns on your account's quota, or trigger model downloads. |
 | `CORS_ORIGIN` | The GitHub Pages origin allowed to call this API (e.g. `https://<user>.github.io`) |
+| `API_BASE_URL` | Optional. e.g. `https://router.huggingface.co/v1` — only needed to make the frontend's "API" model option available. |
+| `API_KEY` | Optional, required together with `API_BASE_URL`. Your Hugging Face access token (or other provider's key) — stays server-side only; the frontend only ever sends a model id, never this key. |
 
 Optional: `EXPERIENCE_DIR` (defaults to `examples/goku-vs-venom`), `CHARACTER_ID`
-(defaults to `goku`).
+(defaults to `goku`), `MODELS_DIR` (defaults to `models` — where a
+frontend-picked local GGUF is cached; only one is kept on disk at a time).
 
 **Known limitation:** free-tier HF CPU Spaces can sleep after a period of
 inactivity, which works against "always-on" serving. If this becomes a

@@ -74,6 +74,35 @@ body {
   background: var(--status-critical);
 }
 
+.dot.downloading,
+.dot.starting {
+  background: var(--status-warning);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-status-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  padding: 6px 12px;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+.model-status-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
 .icon-btn {
   background: transparent;
   border: 1px solid var(--border);
@@ -305,6 +334,47 @@ dialog {
   border-radius: var(--radius);
   padding: 20px;
   width: min(380px, 90vw);
+}
+
+#model-dialog {
+  width: min(460px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.backend-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.backend-tab {
+  flex: 1;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  padding: 8px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.backend-tab.active {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.plain-list.selectable li {
+  cursor: pointer;
+}
+
+.plain-list.selectable li:hover {
+  border-color: var(--accent);
+}
+
+.plain-list.selectable li.selected {
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 dialog::backdrop {

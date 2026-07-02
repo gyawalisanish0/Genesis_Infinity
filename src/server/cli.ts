@@ -1,22 +1,16 @@
 #!/usr/bin/env node
 import { startServer } from "./index.js";
-import type { BackendConfig } from "../ai/index.js";
-
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Environment variable "${name}" is required.`);
-  }
-  return value;
-}
 
 /**
  * Entry point for the always-on API server deployment (see
  * deploy/hf-space-server/). Configured entirely by environment variables
  * rather than CLI flags, since it's meant to run unattended in a
- * container. Defaults to the api backend (not llamaCpp) since this
- * deployment is meant to be a lightweight, always-listening process, not
- * one carrying a multi-GB local model.
+ * container. The server boots with no model loaded — the frontend picks
+ * a backend/model at runtime via POST /api/backend (see server/index.ts,
+ * server/modelCatalogue.ts) — so BACKEND/MODEL_PATH/API_MODEL are no
+ * longer read here. API_BASE_URL/API_KEY, if both set, become the
+ * server-side-only credentials the frontend's "api" backend choice uses;
+ * the frontend only ever supplies a model id, never the credential.
  */
 async function main(): Promise<void> {
   const experienceDir = process.env.EXPERIENCE_DIR ?? "examples/goku-vs-venom";
@@ -32,27 +26,26 @@ async function main(): Promise<void> {
     );
   }
 
-  const backendType = process.env.BACKEND ?? "api";
-  let backend: BackendConfig;
-  if (backendType === "llamaCpp") {
-    backend = { type: "llamaCpp", modelPath: requireEnv("MODEL_PATH") };
-  } else {
-    backend = {
-      type: "api",
-      baseURL: requireEnv("API_BASE_URL"),
-      apiKey: requireEnv("API_KEY"),
-      model: requireEnv("API_MODEL"),
-    };
+  const apiBaseUrl = process.env.API_BASE_URL;
+  const apiCredential = process.env.API_KEY;
+  const apiBackendDefaults =
+    apiBaseUrl && apiCredential ? { baseURL: apiBaseUrl, apiKey: apiCredential } : undefined;
+  if (!apiBackendDefaults) {
+    console.warn(
+      "[server] API_BASE_URL/API_KEY not set — the frontend's \"api\" backend option won't be available " +
+        "until they're configured (local GGUF models via the frontend's picker still work).",
+    );
   }
 
   await startServer({
     experienceDir,
     dbPath: `${experienceDir}/dtm.sqlite`,
-    backend,
     characterId,
     port,
     apiKey,
     corsOrigin,
+    apiBackendDefaults,
+    modelsDir: process.env.MODELS_DIR ?? "models",
   });
 }
 

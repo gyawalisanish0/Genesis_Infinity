@@ -14,6 +14,24 @@ const el = {
   settingBaseUrl: document.getElementById("setting-base-url"),
   settingApiKey: document.getElementById("setting-api-key"),
   settingCharacterId: document.getElementById("setting-character-id"),
+  modelBtn: document.getElementById("model-btn"),
+  modelDot: document.getElementById("model-dot"),
+  modelStatusText: document.getElementById("model-status-text"),
+  modelDialog: document.getElementById("model-dialog"),
+  modelDialogStatus: document.getElementById("model-dialog-status"),
+  modelDialogClose: document.getElementById("model-dialog-close"),
+  tabLocal: document.getElementById("tab-local"),
+  tabApi: document.getElementById("tab-api"),
+  panelLocal: document.getElementById("panel-local"),
+  panelApi: document.getElementById("panel-api"),
+  modelSearchForm: document.getElementById("model-search-form"),
+  modelSearchInput: document.getElementById("model-search-input"),
+  modelSearchResults: document.getElementById("model-search-results"),
+  modelFileSection: document.getElementById("model-file-section"),
+  modelSelectedRepo: document.getElementById("model-selected-repo"),
+  modelFileResults: document.getElementById("model-file-results"),
+  modelApiForm: document.getElementById("model-api-form"),
+  modelApiInput: document.getElementById("model-api-input"),
   sidebarEmpty: document.getElementById("sidebar-empty"),
   sidebarContent: document.getElementById("sidebar-content"),
   charName: document.getElementById("char-name"),
@@ -46,6 +64,66 @@ function setStatus(state) {
   el.statusDot.classList.remove("connected", "error");
   if (state === "connected") el.statusDot.classList.add("connected");
   if (state === "error") el.statusDot.classList.add("error");
+}
+
+let selectedRepo = null;
+let statusPollTimer = null;
+let wasReady = false;
+
+function describeBackendStatus(status) {
+  switch (status.status) {
+    case "idle":
+      return "No model";
+    case "downloading":
+      return `Downloading ${status.filename}…`;
+    case "starting":
+      return "Starting…";
+    case "ready":
+      return status.backend.type === "llamaCpp" ? status.backend.modelPath.split("/").pop() : status.backend.model;
+    case "error":
+      return "Model error";
+  }
+}
+
+function applyBackendStatus(status) {
+  el.modelDot.classList.remove("connected", "downloading", "starting", "error");
+  if (status.status === "ready") el.modelDot.classList.add("connected");
+  if (status.status === "downloading" || status.status === "starting") {
+    el.modelDot.classList.add(status.status);
+  }
+  if (status.status === "error") el.modelDot.classList.add("error");
+
+  el.modelStatusText.textContent = describeBackendStatus(status);
+  el.modelDialogStatus.textContent = `Status: ${describeBackendStatus(status)}${
+    status.status === "error" ? ` — ${status.message}` : ""
+  }`;
+
+  const isReady = status.status === "ready";
+  el.input.disabled = !isReady;
+  el.sendBtn.disabled = !isReady;
+
+  if (isReady && !wasReady) {
+    apiFetch(`/api/scope?characterId=${encodeURIComponent(connection.characterId)}`)
+      .then(renderScope)
+      .catch(() => {});
+    addMessage(`Model ready: ${describeBackendStatus(status)}`, "system");
+  }
+  wasReady = isReady;
+}
+
+async function pollBackendStatus() {
+  try {
+    const status = await apiFetch("/api/backend/status");
+    applyBackendStatus(status);
+  } catch {
+    // Connection issue — leave the last-known status displayed.
+  }
+}
+
+function startStatusPolling() {
+  if (statusPollTimer) return;
+  pollBackendStatus();
+  statusPollTimer = setInterval(pollBackendStatus, 3000);
 }
 
 function addMessage(text, kind) {
@@ -135,13 +213,9 @@ async function connect() {
     const health = await apiFetch("/api/health");
     el.experienceName.textContent = health.experience ?? "Genesis Infinity";
 
-    const scope = await apiFetch(`/api/scope?characterId=${encodeURIComponent(connection.characterId)}`);
-    renderScope(scope);
-
     setStatus("connected");
-    el.input.disabled = false;
-    el.sendBtn.disabled = false;
     addMessage(`Connected to "${health.experience}".`, "system");
+    startStatusPolling();
   } catch (error) {
     setStatus("error");
     addMessage(`Connection failed: ${error.message}`, "system");
@@ -157,6 +231,104 @@ function openSettings() {
   }
   el.settingsDialog.showModal();
 }
+
+function openModelDialog() {
+  pollBackendStatus();
+  el.modelDialog.showModal();
+}
+
+function switchBackendTab(backend) {
+  el.tabLocal.classList.toggle("active", backend === "llamaCpp");
+  el.tabApi.classList.toggle("active", backend === "api");
+  el.panelLocal.classList.toggle("hidden", backend !== "llamaCpp");
+  el.panelApi.classList.toggle("hidden", backend !== "api");
+}
+
+function renderSearchResults(results) {
+  el.modelSearchResults.innerHTML = "";
+  if (results.length === 0) {
+    el.modelSearchResults.innerHTML = '<li class="empty">No results.</li>';
+    return;
+  }
+  for (const result of results) {
+    const li = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = result.id;
+    const downloads = document.createElement("span");
+    downloads.textContent = `${result.downloads.toLocaleString()} dl`;
+    li.append(label, downloads);
+    li.addEventListener("click", () => selectRepo(result.id));
+    el.modelSearchResults.appendChild(li);
+  }
+}
+
+async function selectRepo(repoId) {
+  selectedRepo = repoId;
+  el.modelSelectedRepo.textContent = repoId;
+  el.modelFileSection.classList.remove("hidden");
+  el.modelFileResults.innerHTML = '<li class="empty">Loading…</li>';
+  try {
+    const files = await apiFetch(`/api/models/${encodeURIComponent(repoId)}/files`);
+    el.modelFileResults.innerHTML = "";
+    if (files.length === 0) {
+      el.modelFileResults.innerHTML = '<li class="empty">No .gguf files in this repo.</li>';
+      return;
+    }
+    for (const filename of files) {
+      const li = document.createElement("li");
+      li.textContent = filename;
+      li.addEventListener("click", () => loadLocalModel(repoId, filename));
+      el.modelFileResults.appendChild(li);
+    }
+  } catch (error) {
+    el.modelFileResults.innerHTML = `<li class="empty">${error.message}</li>`;
+  }
+}
+
+async function loadLocalModel(repoId, filename) {
+  try {
+    await apiFetch("/api/backend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "llamaCpp", repoId, filename }),
+    });
+    pollBackendStatus();
+  } catch (error) {
+    el.modelDialogStatus.textContent = `Status: ${error.message}`;
+  }
+}
+
+el.modelBtn.addEventListener("click", openModelDialog);
+el.modelDialogClose.addEventListener("click", () => el.modelDialog.close());
+el.tabLocal.addEventListener("click", () => switchBackendTab("llamaCpp"));
+el.tabApi.addEventListener("click", () => switchBackendTab("api"));
+
+el.modelSearchForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = el.modelSearchInput.value.trim();
+  try {
+    const results = await apiFetch(`/api/models/search?q=${encodeURIComponent(query)}`);
+    renderSearchResults(results);
+  } catch (error) {
+    el.modelSearchResults.innerHTML = `<li class="empty">${error.message}</li>`;
+  }
+});
+
+el.modelApiForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const model = el.modelApiInput.value.trim();
+  if (!model) return;
+  try {
+    await apiFetch("/api/backend", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "api", model }),
+    });
+    pollBackendStatus();
+  } catch (error) {
+    el.modelDialogStatus.textContent = `Status: ${error.message}`;
+  }
+});
 
 el.settingsBtn.addEventListener("click", openSettings);
 el.settingsCancel.addEventListener("click", () => el.settingsDialog.close());
