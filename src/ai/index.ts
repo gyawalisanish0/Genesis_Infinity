@@ -134,7 +134,7 @@ export interface AiSession {
  * BackendConfig), opens independent chat sessions for the narrative
  * session, rules/'s validation session, and audit/'s narration-consistency
  * session (none shares history with the others), and wires up the beta
- * tool set. Tier 1 per docs/ARCHITECTURE.md's AI Orchestration: one model
+ * tool set. Tier 1 per docs/BACKEND_ARCHITECTURE.md's AI Orchestration: one model
  * handles narrative, tool-call decisions, rule validation, and narration
  * auditing in sequence.
  */

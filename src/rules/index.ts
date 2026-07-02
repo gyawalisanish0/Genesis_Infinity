@@ -34,7 +34,7 @@ const VALIDATION_SCHEMA: JsonSchema = {
  * prompt — its own chat session, history reset between calls — whether the
  * action is legal given the current state. Kept distinct from the
  * narrative session so rules validation never leaks into, or is biased by,
- * the ongoing narration (docs/ARCHITECTURE.md Turn Flow, step 5).
+ * the ongoing narration (docs/BACKEND_ARCHITECTURE.md Turn Flow, step 5).
  * Backend-agnostic: works against a local node-llama-cpp model or a remote
  * API-backed model, since it only depends on LlmDriver (see ai/llmDriver.ts).
  */

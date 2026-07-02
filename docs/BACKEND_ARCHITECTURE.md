@@ -1,4 +1,7 @@
-# Architecture Document: Genesis Infinity
+# Backend Architecture Document: Genesis Infinity
+
+> See `docs/FRONTEND_ARCHITECTURE.md` for the static web UI (`frontend/`)
+> that talks to the `server/` HTTP API documented below.
 
 > **Status:** a beta vertical slice is implemented (see **Beta Implementation**
 > below) — every layer exists end-to-end behind a CLI, running on a single
@@ -857,33 +860,8 @@ design above for beta scope.
   unavailable to the frontend if they're not configured). `BACKEND` /
   `MODEL_PATH` / `API_MODEL` env vars from the pre-runtime-picker design
   are gone — model choice no longer belongs at deploy time.
-- **`frontend/`** (`frontend/index.html`, `style.css`, `app.js`) — a
-  small static single-page UI, plain HTML/CSS/JS with no build step and no
-  framework dependency, styled dark and chat-like in the spirit of
-  Open WebUI without depending on that project's codebase (a fork was
-  considered and rejected — see the design discussion for why: a large
-  Python+Svelte codebase for a project that's otherwise 100% TypeScript,
-  built around generic chat rather than game-specific UI, with an ongoing
-  upstream-merge tax). Connection settings (API base URL, shared secret,
-  character id) are entered once via a `<dialog>` and cached in
-  `localStorage`. On connect, it calls `/api/health` and starts polling
-  `/api/backend/status`; the composer stays disabled until status is
-  `"ready"`, at which point it fetches `/api/scope` and renders the stats
-  sidebar (HP as a severity-colored meter — green above 50%, amber above
-  25%, red below; armor class as a plain stat tile; location, inventory,
-  and who else is present), which collapses below the chat log on narrow
-  (phone) viewports rather than beside it. Submitting the composer posts
-  to `/api/turn` and appends both the player's line and the returned
-  narration to the message log, then re-renders the sidebar from the
-  response's bundled `scope`.
-  A separate "Model settings" `<dialog>` (opened from a topbar status
-  button showing the live model name/status) is the runtime backend/model
-  picker: a "Local GGUF" tab searches `/api/models/search`, lists a
-  chosen repo's files via `/api/models/:repoId/files`, and posts
-  `{type: "llamaCpp", repoId, filename}` to `/api/backend` on file click;
-  an "API" tab posts `{type: "api", model}` for a typed model id — the
-  frontend never collects or transmits an actual API credential, only
-  ever a model id string, per the server-side-only-secret design above.
+- **`frontend/`** — the static web UI that drives `server/`'s API from a
+  browser. See `docs/FRONTEND_ARCHITECTURE.md` for its design.
 
 ### Test Experience: Goku vs Venom — Null Void Showdown
 

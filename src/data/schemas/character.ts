@@ -229,7 +229,7 @@ export type InventoryEntry = z.infer<typeof InventoryEntrySchema>;
  * not fixed enums, so non-fantasy settings aren't forced into D&D content.
  *
  * This is distinct from the broader Character entity (personality, tone,
- * timecoded plot points — see docs/ARCHITECTURE.md), which will combine
+ * timecoded plot points — see docs/BACKEND_ARCHITECTURE.md), which will combine
  * this sheet with narrative fields in a later pass.
  */
 export const CharacterSheetSchema = z

@@ -3,7 +3,7 @@ import { AbilityDefSchema, SkillDefSchema, EffectDefSchema, ItemDefSchema } from
 
 /**
  * A character's starting placement in the world — the "location metadata"
- * an Experience bundles per docs/ARCHITECTURE.md. `characterId` must match
+ * an Experience bundles per docs/BACKEND_ARCHITECTURE.md. `characterId` must match
  * a CharacterSheet id; `startingNodeId` must reference a real node (cross-
  * world validation, since ExperienceSchema doesn't itself hold the world).
  */
@@ -43,7 +43,7 @@ export const DEFAULT_ESCALATION_CONFIG: Required<EscalationConfig> = {
  * DEFAULT_ITEMS) via the resolver in data/loaders/character.ts, and
  * escalation falling back to DEFAULT_ESCALATION_CONFIG per-field in
  * data/loaders/experience.ts. The full Experience model (rulesets beyond
- * these, etc.) is deferred — see docs/ARCHITECTURE.md.
+ * these, etc.) is deferred — see docs/BACKEND_ARCHITECTURE.md.
  */
 export const ExperienceSchema = z.object({
   id: z.string(),

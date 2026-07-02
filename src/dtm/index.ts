@@ -2,7 +2,7 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
 /**
  * A single DTM event as read back from storage. Mirrors the dtm_events
- * schema documented in docs/ARCHITECTURE.md.
+ * schema documented in docs/BACKEND_ARCHITECTURE.md.
  */
 export interface DtmEvent {
   id: number;

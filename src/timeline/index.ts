@@ -1,7 +1,7 @@
 /**
  * The engine's timeline: a real-wall-clock-anchored counter, independent of
  * the turn-based dtm timestamp (which counts player inputs, not elapsed
- * time — see docs/ARCHITECTURE.md's DTM section). The timeline advances
+ * time — see docs/BACKEND_ARCHITECTURE.md's DTM section). The timeline advances
  * automatically as real time passes, at a fixed ratio, so durations (e.g.
  * effect/hazard expiry) behave consistently regardless of how many turns a
  * player takes in a given span.

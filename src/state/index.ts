@@ -18,7 +18,7 @@ import { findNode, mergeEnvironmentalCodes } from "../data/schemas/world.js";
  * active. `appliedAtUnit`/`expiresAtUnit` are timeline/ units (real-wall-
  * clock-anchored), not turn counts — an effect's duration is meant to
  * behave consistently regardless of how many turns pass in that span (see
- * timeline/index.ts, docs/ARCHITECTURE.md).
+ * timeline/index.ts, docs/BACKEND_ARCHITECTURE.md).
  */
 export interface AppliedDebuff extends EffectDef {
   appliedAtUnit: number;
@@ -182,7 +182,7 @@ function computeEffectiveStats(
  * Computes the current state snapshot for a loaded Experience: every
  * character's sheet, current node, active debuffs, effective stats (sheet +
  * debuffs applied), and the current node's environmental codes, derived
- * from dtm/ rather than stored independently (see docs/ARCHITECTURE.md,
+ * from dtm/ rather than stored independently (see docs/BACKEND_ARCHITECTURE.md,
  * "State"). `currentTurn` is the engine's turn counter, echoed into the
  * snapshot (AI-visible, e.g. via rules/'s judgment). `currentTimelineUnit`
  * is a separate, real-wall-clock-anchored value (see timeline/index.ts)

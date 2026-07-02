@@ -300,7 +300,7 @@ function applyUseTechnique(
  * character must actually be carrying it (quantity > 0), the same hard
  * capability gate `techniques` gives `use_technique`. These are the only
  * deterministic guardrails on interact; everything else (does the attempt
- * succeed) is rules/'s tri-state judgment (see docs/ARCHITECTURE.md).
+ * succeed) is rules/'s tri-state judgment (see docs/BACKEND_ARCHITECTURE.md).
  */
 function checkInteract(
   ctx: ToolContext,
@@ -486,7 +486,7 @@ export function rejectAction(
  * move, "does the character actually know this" for use_technique, "does
  * the named target exist and is it present" for interact. This is the hard
  * gate: failing it means the action never reaches rules/ at all (see ai/,
- * docs/ARCHITECTURE.md Turn Flow).
+ * docs/BACKEND_ARCHITECTURE.md Turn Flow).
  */
 export function checkAction(ctx: ToolContext, action: Action): ActionCheck {
   switch (action.type) {
