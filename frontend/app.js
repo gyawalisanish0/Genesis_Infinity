@@ -69,6 +69,7 @@ function setStatus(state) {
 let selectedRepo = null;
 let statusPollTimer = null;
 let wasReady = false;
+let modelSwitchInFlight = false;
 
 function describeBackendStatus(status) {
   switch (status.status) {
@@ -97,6 +98,10 @@ function applyBackendStatus(status) {
   el.modelDialogStatus.textContent = `Status: ${describeBackendStatus(status)}${
     status.status === "error" ? ` — ${status.message}` : ""
   }`;
+
+  if (status.status === "ready" || status.status === "error") {
+    modelSwitchInFlight = false;
+  }
 
   const isReady = status.status === "ready";
   el.input.disabled = !isReady;
@@ -286,6 +291,8 @@ async function selectRepo(repoId) {
 }
 
 async function loadLocalModel(repoId, filename) {
+  if (modelSwitchInFlight) return;
+  modelSwitchInFlight = true;
   try {
     await apiFetch("/api/backend", {
       method: "POST",
@@ -294,6 +301,7 @@ async function loadLocalModel(repoId, filename) {
     });
     pollBackendStatus();
   } catch (error) {
+    modelSwitchInFlight = false;
     el.modelDialogStatus.textContent = `Status: ${error.message}`;
   }
 }
@@ -317,7 +325,8 @@ el.modelSearchForm.addEventListener("submit", async (event) => {
 el.modelApiForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const model = el.modelApiInput.value.trim();
-  if (!model) return;
+  if (!model || modelSwitchInFlight) return;
+  modelSwitchInFlight = true;
   try {
     await apiFetch("/api/backend", {
       method: "POST",
@@ -326,6 +335,7 @@ el.modelApiForm.addEventListener("submit", async (event) => {
     });
     pollBackendStatus();
   } catch (error) {
+    modelSwitchInFlight = false;
     el.modelDialogStatus.textContent = `Status: ${error.message}`;
   }
 });

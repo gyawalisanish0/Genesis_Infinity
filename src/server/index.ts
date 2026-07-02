@@ -165,6 +165,16 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           | { type: "llamaCpp"; repoId: string; filename: string }
           | { type: "api"; model: string };
 
+        // Reject overlapping switches rather than letting two downloads race
+        // to write the same modelsDir path — observed in practice as a
+        // corrupted GGUF (truncated mid-tensor) when a second request landed
+        // before the first's download/load finished.
+        if (status.status === "downloading" || status.status === "starting") {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "A model switch is already in progress" }));
+          return;
+        }
+
         if (body.type === "llamaCpp") {
           if (typeof body.repoId !== "string" || typeof body.filename !== "string") {
             res.writeHead(400, { "Content-Type": "application/json" });
