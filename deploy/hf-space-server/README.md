@@ -34,7 +34,10 @@ available to every deployment without any frontend changes.
 
 Optional: `EXPERIENCE_DIR` (defaults to `examples/goku-vs-venom`), `CHARACTER_ID`
 (defaults to `goku`), `MODELS_DIR` (defaults to `models` — where a
-frontend-picked local GGUF is cached; only one is kept on disk at a time).
+frontend-picked local GGUF is cached; only one is kept on disk at a time),
+`DEBUG` (`true`/`1` to log each turn's input, tool calls, and final narration
+to this Space's container logs — the server equivalent of the CLI's `--debug`
+flag, useful for diagnosing what an API-backed model actually did on a turn).
 
 **Known limitation:** free-tier HF CPU Spaces can sleep after a period of
 inactivity, which works against "always-on" serving. If this becomes a
