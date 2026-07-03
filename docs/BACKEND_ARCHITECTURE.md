@@ -1027,6 +1027,17 @@ the same pattern as `rules/`'s `RuleValidator` and `audit/`'s
   pre-allocated sequence count (3 → 4, for the new summarizer session)
   now actually pays off on that backend too, not just the API one.
 
+**Net shape: one pipeline, one call site, two backend adapters.** Local
+(node-llama-cpp) and remote-API sessions are not two separate
+context-management flows — `ai/index.ts`'s turn loop makes the only
+"what to shrink and when" decision, once per turn, calling
+`session.compactContext?.(rollupSummary)` without ever branching on which
+backend is active. `ApiChatSession` and `LlamaCppChatSession` are two
+implementations of that one `ChatDriverSession` contract, each adapting it
+to their own history representation (flat message array vs. nested
+`ChatHistoryItem`s) — the same "one interface, swap the backend under it"
+pattern `llmDriver.ts` already uses for `prompt()`/`promptForJson`.
+
 Verified against the real fixture with a mocked backend across 56
 simulated turns: the first subblock summary is generated at turn 5 and
 folded into the recap by turn 10; the 10th subblock triggers a block-level
