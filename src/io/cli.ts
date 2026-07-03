@@ -167,14 +167,15 @@ async function main(): Promise<void> {
       }
 
       toolCalls.length = 0;
-      const response = await engine.takeTurn(input);
+      const { narration, reasoning } = await engine.takeTurn(input);
 
       if (args.debug) {
         printToolCalls(toolCalls);
         printScope("scope after turn", engine.toolCtx, args.characterId, engine.currentTurn());
+        if (reasoning) console.log(`\n--- reasoning ---\n${reasoning}`);
       }
 
-      console.log(`\n${response}\n`);
+      console.log(`\n${narration}\n`);
     }
   } finally {
     rl.close();

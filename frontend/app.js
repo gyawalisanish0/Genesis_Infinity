@@ -274,6 +274,111 @@ function addMessage(text, kind) {
   div.textContent = text;
   el.messages.appendChild(div);
   el.messages.scrollTop = el.messages.scrollHeight;
+  return div;
+}
+
+// A narrator bubble shown the instant a turn is submitted, before any
+// tool call or narration exists yet - replaced in place (see the composer
+// submit handler) once the turn's "done" event arrives, so the player
+// always has feedback that the Engine is working rather than a dead gap.
+function addPendingMessage() {
+  const div = document.createElement("div");
+  div.className = "message narrator pending";
+  div.innerHTML =
+    '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+  el.messages.appendChild(div);
+  el.messages.scrollTop = el.messages.scrollHeight;
+  return div;
+}
+
+function describeToolCall(call) {
+  return `${call.name}(${JSON.stringify(call.params)})`;
+}
+
+// A live, Codex/Claude-Code-style feed of this turn's tool calls - starts
+// hidden and expanded, revealed on the first tool_call event and filled in
+// as more arrive, then collapsed (not removed) once the turn's "done"
+// event lands so the activity stays inspectable without cluttering the
+// transcript by default.
+function addToolLog() {
+  const details = document.createElement("details");
+  details.className = "tool-log hidden";
+  details.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = "Tool calls (0)";
+  const list = document.createElement("ul");
+  details.append(summary, list);
+  el.messages.appendChild(details);
+  return { details, summary, list };
+}
+
+function appendToolLogEntry(log, call) {
+  log.details.classList.remove("hidden");
+  const li = document.createElement("li");
+  li.textContent = describeToolCall(call);
+  log.list.appendChild(li);
+  log.summary.textContent = `Tool calls (${log.list.children.length})`;
+  el.messages.scrollTop = el.messages.scrollHeight;
+}
+
+// Reasoning models (e.g. DeepSeek R1) emit a chain-of-thought alongside
+// their narration (see ai/index.ts's extractReasoning) - shown as a
+// collapsed-by-default block right before the narration bubble it
+// produced, rather than either hiding it entirely or leaking it inline.
+function addReasoningBlock(text, beforeNode) {
+  const details = document.createElement("details");
+  details.className = "reasoning-block";
+  const summary = document.createElement("summary");
+  summary.textContent = "Thinking";
+  const body = document.createElement("div");
+  body.className = "reasoning-text";
+  body.textContent = text;
+  details.append(summary, body);
+  el.messages.insertBefore(details, beforeNode);
+  return details;
+}
+
+/**
+ * Streams a turn over Server-Sent Events. Can't use the browser's native
+ * EventSource here - it's GET-only with no request body or custom headers,
+ * and /api/turn needs POST (a JSON body) plus the X-Api-Key header - so
+ * this reads the fetch response's body stream directly and splits it into
+ * SSE frames by hand. `handlers` maps event name -> callback(data).
+ */
+async function postSSE(path, body, handlers) {
+  const response = await fetch(`${connection.baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(connection.apiKey ? { "X-Api-Key": connection.apiKey } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? `Request failed (${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let frameEnd;
+    while ((frameEnd = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, frameEnd);
+      buffer = buffer.slice(frameEnd + 2);
+      const eventMatch = frame.match(/^event: (.+)$/m);
+      const dataMatch = frame.match(/^data: (.+)$/m);
+      if (!eventMatch || !dataMatch) continue;
+      handlers[eventMatch[1]]?.(JSON.parse(dataMatch[1]));
+    }
+  }
 }
 
 function hpMeterColor(current, max) {
@@ -584,15 +689,37 @@ el.composer.addEventListener("submit", async (event) => {
   el.input.disabled = true;
   el.sendBtn.disabled = true;
 
+  const toolLog = addToolLog();
+  const pending = addPendingMessage();
+  const settleToolLog = () => {
+    if (toolLog.list.children.length === 0) toolLog.details.remove();
+    else toolLog.details.open = false;
+  };
+
   try {
-    const result = await apiFetch("/api/turn", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input }),
-    });
-    addMessage(result.narration, "narrator");
-    if (result.scope) renderScope(result.scope);
+    let turnError = null;
+    await postSSE(
+      "/api/turn",
+      { input },
+      {
+        tool_call: (call) => appendToolLogEntry(toolLog, call),
+        done: ({ narration, reasoning, scope }) => {
+          settleToolLog();
+          if (reasoning) addReasoningBlock(reasoning, pending);
+          pending.classList.remove("pending");
+          pending.textContent = narration;
+          if (scope) renderScope(scope);
+          el.messages.scrollTop = el.messages.scrollHeight;
+        },
+        error: (data) => {
+          turnError = data.error ?? "Unknown error";
+        },
+      },
+    );
+    if (turnError) throw new Error(turnError);
   } catch (error) {
+    settleToolLog();
+    pending.remove();
     addMessage(`Error: ${error.message}`, "system");
   } finally {
     el.input.disabled = false;

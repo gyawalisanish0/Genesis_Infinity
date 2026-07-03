@@ -47,8 +47,34 @@ rather than beside it. Re-rendered from the `scope` bundled in every
 
 ## Chat
 
-Submitting the composer posts `{input}` to `POST /api/turn` and appends
-both the player's line and the returned narration to the message log.
+Submitting the composer appends the player's line, then a "pending"
+narrator bubble (three animated dots — feedback that the Engine is working,
+shown the instant a turn starts rather than leaving a dead gap until it
+finishes), then streams `POST /api/turn` via `postSSE()`. Can't use the
+browser's native `EventSource` here — it's GET-only with no request body or
+custom headers, and this needs POST plus `X-Api-Key` — so `postSSE` reads
+the `fetch` response's body stream directly and splits it into SSE frames
+by hand (`event: ...\ndata: ...\n\n`).
+
+Three event types drive the UI (see `docs/BACKEND_ARCHITECTURE.md`'s
+"Reasoning models & live tool activity" for the server side):
+
+- **`tool_call`** — appended live to a `<details class="tool-log">` (one
+  per turn, revealed on the first call rather than always visible), each
+  entry a compact `name(params)` line, the summary updating to
+  `Tool calls (N)` — a small Codex/Claude-Code-style feed of what the
+  Engine is actually doing mid-turn, not just the end result.
+- **`done`** — carries `{narration, reasoning, scope}`. The tool log (if it
+  ever appeared) collapses rather than disappears, so the activity stays
+  inspectable after the fact; if `reasoning` is present (a reasoning model's
+  extracted chain-of-thought — see the backend doc), a collapsed-by-default
+  `<details class="reasoning-block">` labeled "Thinking" is inserted right
+  before the narration bubble; the pending bubble then loses its dots and
+  becomes the real narration text; `scope` re-renders the sidebar exactly
+  as before.
+- **`error`** — the pending bubble and any (empty) tool log are removed,
+  and the error is shown as a `system` message, same as a failed
+  non-streaming request used to look.
 
 ## Model settings dialog
 

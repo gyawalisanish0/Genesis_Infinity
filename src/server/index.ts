@@ -3,7 +3,7 @@ import { createEngine, type Engine } from "../core/index.js";
 import { loadExperience } from "../data/loaders/experience.js";
 import { getState } from "../state/index.js";
 import { getScope } from "../scope/index.js";
-import type { BackendConfig } from "../ai/index.js";
+import type { BackendConfig, ToolCallRecord } from "../ai/index.js";
 import { searchGgufModels, listGgufFiles, downloadGgufModel } from "./modelCatalogue.js";
 import { KNOWN_API_PROVIDERS, isKnownApiProvider, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
 import { listApiModels } from "./apiModelCatalogue.js";
@@ -94,6 +94,14 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
   let engine: Engine | null = null;
   let status: BackendStatus = { status: "idle" };
 
+  // Single-session beta (see this function's own doc comment): only one
+  // turn is ever in flight at a time, so a single mutable slot is enough to
+  // route a turn's tool-call events to whichever /api/turn request is
+  // currently streaming it, without threading a per-request callback all
+  // the way through core/'s Engine (onToolCall is bound once, at Engine
+  // creation, for the Engine's whole lifetime — see core/index.ts).
+  let activeTurnListener: ((call: ToolCallRecord) => void) | null = null;
+
   async function setBackend(backend: BackendConfig, readyStatus: BackendStatus): Promise<void> {
     status = { status: "starting" };
     try {
@@ -106,9 +114,12 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         dbPath: options.dbPath,
         backend,
         playerCharacterId: options.characterId,
-        onToolCall: options.debug
-          ? (call) => console.log(`[debug] ${call.name}(${JSON.stringify(call.params)}) -> ${JSON.stringify(call.result)}`)
-          : undefined,
+        onToolCall: (call) => {
+          if (options.debug) {
+            console.log(`[debug] ${call.name}(${JSON.stringify(call.params)}) -> ${JSON.stringify(call.result)}`);
+          }
+          activeTurnListener?.(call);
+        },
       });
       status = readyStatus;
     } catch (error) {
@@ -325,10 +336,32 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           return;
         }
         if (options.debug) console.log(`[debug] turn input: ${JSON.stringify(input)}`);
-        const narration = await engine.takeTurn(input);
-        if (options.debug) console.log(`[debug] turn narration: ${JSON.stringify(narration)}`);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ narration, scope: currentScope() }));
+
+        // Server-Sent Events instead of a single JSON reply: a turn can run
+        // several tool calls before it has any narration to show, and the
+        // frontend wants to render each one live (see frontend/'s tool
+        // activity log) rather than only learning what happened once the
+        // whole turn has already finished.
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        const sendEvent = (event: string, data: unknown) => {
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        activeTurnListener = (call) => sendEvent("tool_call", call);
+        try {
+          const { narration, reasoning } = await engine.takeTurn(input);
+          if (options.debug) console.log(`[debug] turn narration: ${JSON.stringify(narration)}`);
+          sendEvent("done", { narration, reasoning, scope: currentScope() });
+        } catch (error) {
+          sendEvent("error", { error: error instanceof Error ? error.message : String(error) });
+        } finally {
+          activeTurnListener = null;
+          res.end();
+        }
         return;
       }
 

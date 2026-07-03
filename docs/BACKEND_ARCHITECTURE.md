@@ -885,6 +885,17 @@ design above for beta scope.
     `/api/scope` and `/api/turn` are gated on `status.status === "ready"`,
     returning `409` otherwise so the frontend knows to prompt for a model
     instead of treating it as a hard connection error.
+  - `POST /api/turn` — once past the same `400`/`409` validation as before,
+    responds as Server-Sent Events rather than one JSON blob: a `tool_call`
+    event per tool call as `engine.takeTurn` makes them (routed through a
+    single mutable `activeTurnListener` slot — single-session beta means
+    only one turn is ever in flight, so this avoids threading a per-request
+    callback through `core/`'s `Engine`, whose `onToolCall` is bound once
+    for the Engine's whole lifetime), then one `done` event carrying
+    `{narration, reasoning, scope}`, or an `error` event on failure. See
+    "Reasoning models & live tool activity" below and
+    `docs/FRONTEND_ARCHITECTURE.md`'s Chat section for why and how the
+    frontend consumes this.
   - `POST /api/backend/unload` — disposes the current `Engine` (freeing
     the loaded model's RAM) and returns `status` to `idle`, without
     touching `modelsDir` — a previously-downloaded GGUF stays cached on
@@ -944,6 +955,48 @@ design above for beta scope.
     dropdown "Suggested model" instead of "Free model."
 - **`frontend/`** — the static web UI that drives `server/`'s API from a
   browser. See `docs/FRONTEND_ARCHITECTURE.md` for its design.
+
+### Reasoning models & live tool activity
+
+Found live: a user on Hugging Face's router picked a reasoning model
+(DeepSeek R1) and its raw output arrived as a literal
+`<think>...reasoning...</think>actual reply` string in the same message
+`content` field a plain model would use for narration alone — there's no
+separate API field to route it through for models exposed this way. Left
+alone, that reasoning text would either leak straight into the player-facing
+narration or (if stripped and discarded) be silently lost. Separately, the
+frontend had no visibility into a turn's tool calls until the entire turn —
+narration and all — had already finished, unlike Codex/Claude Code's live
+tool-activity feed.
+
+**Reasoning extraction (`ai/`).** `createAiSession`'s `prompt()` no longer
+returns a bare narration string — it returns a `TurnResult`:
+`{narration: string, reasoning?: string}`. A new `extractReasoning` helper
+strips every `<think>...</think>` block out of the model's raw text
+(concatenating multiple blocks' contents, if a model somehow emits more
+than one) before any of the existing validity checks — blank/leaked-syntax
+detection, the narration auditor, the retry-then-fallback flow — ever see
+it, so `<think>` content can never itself trip an "invalid narration" retry
+or end up narrated as fact. Applied at every point the narrative session's
+raw text is captured (the first reply, a post-audit correction retry, and
+the no-tool-call invalid-narration retry) — a deterministic fallback
+sentence (`buildFallbackNarration`) has no corresponding reasoning, so
+`reasoning` is cleared to `undefined` whenever that path is taken.
+`core/`'s `Engine.takeTurn` and `io/cli.ts` were updated for the same
+`TurnResult` shape (`cli.ts` prints reasoning under `--debug` only).
+
+**Live tool activity (`server/`).** See `POST /api/turn` above — Server-Sent
+Events, one `tool_call` event per completed tool call during the turn, then
+one `done` event with `{narration, reasoning, scope}` (or `error`). This
+reuses the exact `ToolCallRecord` callback (`AiSessionOptions.onToolCall`)
+already wired for `--debug`/DEBUG console logging — `setBackend`'s
+`onToolCall` now unconditionally forwards each call to
+`activeTurnListener` (console-logging too, still only under `debug`)
+instead of only existing when `debug` was on.
+
+See `docs/FRONTEND_ARCHITECTURE.md`'s Chat section for the corresponding
+frontend: a typing-indicator bubble, a live (then collapsed) tool-call log,
+and a collapsible "Thinking" block.
 
 ### Context Efficiency
 
