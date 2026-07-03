@@ -22,7 +22,7 @@
   ],
   "techniques": [
     { "id": "symbiote-tendrils", "name": "Symbiote Tendrils", "description": "Lashes out with whip-like extensions of the symbiote mass." },
-    { "id": "venom-bite", "name": "Venom Bite", "description": "A vicious bite from the symbiote's fanged maw." },
+    { "id": "venom-bite", "name": "Venom Bite", "description": "A vicious bite from the symbiote's fanged maw.", "effectId": "bite-wound" },
     { "id": "symbiote-camouflage", "name": "Symbiote Camouflage", "description": "Melds the symbiote mass into the surroundings, turning invisible to sight." }
   ],
   "inventory": [

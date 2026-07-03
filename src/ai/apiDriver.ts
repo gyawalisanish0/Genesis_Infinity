@@ -81,6 +81,16 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
+/**
+ * Replaces a stale tool-role message's content once its round has finished
+ * - the model already used the real result to produce its next message;
+ * keeping the full JSON blob around forever only grows every later
+ * request's payload for no ongoing benefit (get_scope's result in
+ * particular is one of the largest, most frequently-called results, and
+ * a turn or two later it no longer reflects current state anyway).
+ */
+const COMPACTED_TOOL_RESULT = '{"note":"omitted - superseded by a later tool call"}';
+
 class ApiChatSession implements ChatDriverSession {
   private messages: OpenAiMessage[];
 
@@ -163,6 +173,30 @@ class ApiChatSession implements ChatDriverSession {
 
   resetHistory(): void {
     this.messages = [this.messages[0]!];
+  }
+
+  compactContext(summary?: string): void {
+    const systemMessage = this.messages[0]!;
+
+    if (summary !== undefined) {
+      // A rollup turn (see ai/'s Summarizer usage) - the new recap
+      // supersedes everything, tool results included, so a full replace
+      // subsumes the plain per-turn compaction below.
+      this.messages = [systemMessage, { role: "user", content: `[Recap of earlier turns]: ${summary}` }];
+      return;
+    }
+
+    // Every other turn: compact this turn's own tool-role messages once
+    // they've served their purpose (feeding the model's own next reply) -
+    // keeping the full JSON blob around forever only grows every later
+    // request's payload for no ongoing benefit (get_scope's result in
+    // particular is one of the largest, most frequently-called results,
+    // and a turn or two later it no longer reflects current state anyway).
+    for (const message of this.messages) {
+      if (message.role === "tool" && message.content !== COMPACTED_TOOL_RESULT) {
+        message.content = COMPACTED_TOOL_RESULT;
+      }
+    }
   }
 }
 

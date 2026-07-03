@@ -3,11 +3,23 @@ import {
   getLlama,
   defineChatSessionFunction,
   LlamaChatSession,
+  type ChatHistoryItem,
+  type ChatSystemMessage,
   type Llama,
   type LlamaContextSequence,
   type LlamaJsonSchemaGrammar,
 } from "node-llama-cpp";
 import type { ChatDriverSession, JsonSchema, LlmDriver, ToolDef } from "./llmDriver.js";
+
+/**
+ * Mirrors apiDriver.ts's COMPACTED_TOOL_RESULT placeholder - same
+ * reasoning, different representation. LlamaChatSession has no flat
+ * message array to mutate; tool-call results live as `result` fields on
+ * ChatModelFunctionCall segments nested inside each ChatModelResponse
+ * (see node-llama-cpp's types.d.ts), reachable and freely rewritable via
+ * getChatHistory()/setChatHistory().
+ */
+const COMPACTED_TOOL_RESULT = { note: "omitted - superseded by a later tool call" };
 
 /**
  * Detects the container's actual CPU quota from cgroup limits, if any.
@@ -89,6 +101,32 @@ class LlamaCppChatSession implements ChatDriverSession {
   resetHistory(): void {
     this.session.resetChatHistory();
   }
+
+  compactContext(summary?: string): void {
+    const history = this.session.getChatHistory();
+
+    if (summary !== undefined) {
+      // A rollup turn (see ai/'s Summarizer usage) - the new recap
+      // supersedes everything, so a full replace subsumes the plain
+      // per-turn compaction below, same as apiDriver.ts's ApiChatSession.
+      const systemMessage = history.find((item): item is ChatSystemMessage => item.type === "system");
+      const recap: ChatHistoryItem = { type: "user", text: `[Recap of earlier turns]: ${summary}` };
+      this.session.setChatHistory(systemMessage ? [systemMessage, recap] : [recap]);
+      return;
+    }
+
+    // Every other turn: compact this turn's own tool-call results once
+    // they've served their purpose, same reasoning as apiDriver.ts.
+    for (const item of history) {
+      if (item.type !== "model") continue;
+      for (const segment of item.response) {
+        if (typeof segment === "object" && segment.type === "functionCall" && segment.result !== COMPACTED_TOOL_RESULT) {
+          segment.result = COMPACTED_TOOL_RESULT;
+        }
+      }
+    }
+    this.session.setChatHistory(history);
+  }
 }
 
 export interface LlamaCppBackendConfig {
@@ -97,12 +135,16 @@ export interface LlamaCppBackendConfig {
 
 /**
  * LlmDriver implementation backed by a local node-llama-cpp model.
- * Pre-allocates 3 sequences on one context (matching ai/'s narrative/
- * rules/audit sessions) - contextSize is bounded explicitly rather than
- * "auto" (which tries to size up to the model's full trained context,
- * often 128K+ tokens) for the same reason `sequences` is bounded: either
- * gap can exhaust available RAM or, if too small, overflow mid-turn (see
- * the 4096 -> 8192 bump after a real crash on a Hugging Face CPU Space).
+ * Pre-allocates 4 sequences on one context (matching ai/'s narrative/
+ * rules/audit/summarizer sessions) - contextSize is bounded explicitly
+ * rather than "auto" (which tries to size up to the model's full trained
+ * context, often 128K+ tokens) for the same reason `sequences` is bounded:
+ * either gap can exhaust available RAM or, if too small, overflow mid-turn
+ * (see the 4096 -> 8192 bump after a real crash on a Hugging Face CPU
+ * Space). Local sessions implement compactContext (see llmDriver.ts) via
+ * LlamaChatSession's getChatHistory()/setChatHistory() - the fourth
+ * pre-allocated sequence is for ai/'s summarizer session, whose output
+ * now takes effect on local sessions too, same as the API backend.
  */
 export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promise<LlmDriver> {
   const cpuQuota = detectCpuQuota();
@@ -115,15 +157,20 @@ export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promi
   console.log(`[cpu-quota] llama.maxThreads resolved to: ${llama.maxThreads}`);
 
   const model = await llama.loadModel({ modelPath: config.modelPath });
-  const context = await model.createContext({ contextSize: 8192, sequences: 3 });
+  const context = await model.createContext({ contextSize: 8192, sequences: 4 });
 
-  const sequences: LlamaContextSequence[] = [context.getSequence(), context.getSequence(), context.getSequence()];
+  const sequences: LlamaContextSequence[] = [
+    context.getSequence(),
+    context.getSequence(),
+    context.getSequence(),
+    context.getSequence(),
+  ];
   let nextSequenceIndex = 0;
 
   return {
     createChatSession(systemPrompt: string): ChatDriverSession {
       if (nextSequenceIndex >= sequences.length) {
-        throw new Error("llamaCppDriver: no more sequences available (only 3 pre-allocated)");
+        throw new Error(`llamaCppDriver: no more sequences available (only ${sequences.length} pre-allocated)`);
       }
       const sequence = sequences[nextSequenceIndex++];
       return new LlamaCppChatSession(llama, sequence, systemPrompt);

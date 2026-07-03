@@ -44,6 +44,27 @@ export interface ChatDriverSession {
   promptForJson<T>(input: string, schema: JsonSchema): Promise<T>;
   /** Clears conversational history back to just the system prompt. */
   resetHistory(): void;
+  /**
+   * The single end-of-turn context-maintenance step — called exactly once
+   * per turn by ai/'s turn loop, never automatically inside prompt() itself,
+   * so all context-shrinking behavior lives in one visible place instead of
+   * being split between a driver-internal mechanism and a separate
+   * caller-triggered one (see docs/BACKEND_ARCHITECTURE.md's Context
+   * Efficiency section).
+   * - Called with no argument on an ordinary turn: compacts that turn's own
+   *   tool-call results now that they've served their purpose (fed the
+   *   model's next reply) - keeping their full content around only grows
+   *   every later request for no ongoing benefit.
+   * - Called with `summary` on a rollup turn (ai/'s Summarizer produced a
+   *   new subblock/block recap): collapses the *entire* history down to one
+   *   message containing it, superseding the plain per-turn compaction for
+   *   that call - a recap already accounts for everything it replaces.
+   * Optional: a driver that can't or doesn't yet support this
+   * (llamaCppDriver.ts's local sessions, whose context is managed
+   * internally by node-llama-cpp) simply leaves it unimplemented — callers
+   * use `session.compactContext?.(...)`.
+   */
+  compactContext?(summary?: string): void;
 }
 
 export interface LlmDriver {

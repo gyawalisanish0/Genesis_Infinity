@@ -11,7 +11,8 @@ import {
 } from "../tools/index.js";
 import { RuleValidator } from "../rules/index.js";
 import { NarrationAuditor } from "../audit/index.js";
-import { getState } from "../state/index.js";
+import { Summarizer } from "../summarizer/index.js";
+import { getState, type StateSnapshot } from "../state/index.js";
 import type { LlmDriver, ToolDef } from "./llmDriver.js";
 import { createLlamaCppDriver, type LlamaCppBackendConfig } from "./llamaCppDriver.js";
 import { createApiDriver, type ApiBackendConfig } from "./apiDriver.js";
@@ -44,6 +45,26 @@ const NULLISH_STRINGS = new Set(["null", "undefined", "none"]);
 function normalizeOptionalId(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   return NULLISH_STRINGS.has(value.trim().toLowerCase()) ? undefined : value;
+}
+
+/**
+ * Trims a StateSnapshot down to only the characters actually relevant to a
+ * proposed action (the actor, plus its target if any) before it's sent to
+ * rules/'s validator. `rules/`'s judgment only ever depends on those two
+ * characters' state - serializing every other character in the Experience
+ * into that prompt is dead weight that scales with cast size regardless of
+ * relevance (measured: ~1.7K tokens per call in a 2-character fixture,
+ * would scale linearly with a larger cast).
+ */
+function scopeStateToAction(state: StateSnapshot, action: Action): StateSnapshot {
+  const relevantIds = new Set<string>([action.characterId]);
+  if ("targetId" in action && action.targetId) {
+    relevantIds.add(action.targetId);
+  }
+  return {
+    ...state,
+    characters: state.characters.filter((c) => relevantIds.has(c.sheet.id)),
+  };
 }
 
 function describeAction(action: Action): string {
@@ -143,6 +164,25 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
   const ruleValidator = new RuleValidator(driver);
   const narrationAuditor = new NarrationAuditor(driver);
+  const summarizer = new Summarizer(driver);
+
+  // Context-efficiency: the narrative session's history would otherwise
+  // grow every turn forever (see docs/BACKEND_ARCHITECTURE.md's Context
+  // Efficiency section). Every SUBBLOCK_TURN_COUNT turns, recent
+  // narrations are compressed into one ~SUBBLOCK_TARGET_WORDS-word
+  // "subblock" summary; every SUBBLOCKS_PER_BLOCK subblocks, those are
+  // compressed again into one coarser "block" summary, so long-run growth
+  // stays bounded (logarithmic-ish) rather than accumulating one subblock
+  // per few turns forever. blockSummaries + subblockSummaries together are
+  // the full current recap, resent via compactToSummary each time either
+  // level rolls up.
+  const SUBBLOCK_TURN_COUNT = 5;
+  const SUBBLOCK_TARGET_WORDS = 50;
+  const SUBBLOCKS_PER_BLOCK = 10;
+  const BLOCK_TARGET_WORDS = 75;
+  let pendingNarrations: string[] = [];
+  let subblockSummaries: string[] = [];
+  let blockSummaries: string[] = [];
 
   const turn = { timestamp: 0 };
   let turnToolCalls: ToolCallRecord[] = [];
@@ -350,7 +390,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         );
         const validation = await ruleValidator.validate(
           { type: action.type, characterId: action.characterId, description: describeAction(action) },
-          state,
+          scopeStateToAction(state, action),
         );
         if (validation.outcome === "invalid") {
           const result = rejectAction(
@@ -399,10 +439,25 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
       // Only check turns where `action` was called — say/note_hazard/check
       // tools have no mechanical outcome a narration could contradict.
+      // Within that, the full LLM-based audit call is itself skipped when
+      // every action this turn was a clean, fully-successful outcome
+      // (result.success && outcome === "valid") — narration drift is far
+      // more likely on a rejected or "neutral" (didn't fully land) result,
+      // where a model is tempted to narrate the success it wanted rather
+      // than what actually happened. isInvalidNarration's cheap, local
+      // blank/leaked-syntax check still always runs regardless — this only
+      // skips the separate, costlier narrationAuditor.audit() API call.
+      const needsFullAudit = actionCalls.some((call) => {
+        const result = call.result as ActionResult | RejectionResult;
+        return !result.success || result.outcome === "neutral";
+      });
+      const auditOrTrust = () =>
+        needsFullAudit ? narrationAuditor.audit(narration, turnToolCalls) : Promise.resolve({ consistent: true as const });
+
       if (actionCalls.length > 0) {
         auditResult = isInvalidNarration(narration)
           ? { consistent: false, contradiction: invalidReason }
-          : await narrationAuditor.audit(narration, turnToolCalls);
+          : await auditOrTrust();
 
         while (!auditResult.consistent && retries < MAX_NARRATION_RETRIES) {
           retries += 1;
@@ -416,7 +471,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           narration = await session.prompt(correction);
           auditResult = isInvalidNarration(narration)
             ? { consistent: false, contradiction: invalidReason }
-            : await narrationAuditor.audit(narration, turnToolCalls);
+            : await auditOrTrust();
         }
 
         if (!auditResult.consistent) {
@@ -443,12 +498,32 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         payload: {
           narration,
           toolCalls: turnToolCalls,
-          checked: actionCalls.length > 0,
+          checked: actionCalls.length > 0 && needsFullAudit,
           consistent: auditResult.consistent,
           retries,
           usedFallback: actionCalls.length > 0 && !auditResult.consistent,
         },
       });
+
+      // Single end-of-turn context-maintenance step (see llmDriver.ts's
+      // compactContext doc comment) - called exactly once per turn, every
+      // turn, so there's one pipeline deciding what to shrink and when,
+      // not a driver-internal mechanism plus a separate caller-triggered
+      // one running independently of each other.
+      pendingNarrations.push(narration);
+      let rollupSummary: string | undefined;
+      if (pendingNarrations.length >= SUBBLOCK_TURN_COUNT) {
+        subblockSummaries.push(await summarizer.summarize(pendingNarrations, SUBBLOCK_TARGET_WORDS));
+        pendingNarrations = [];
+
+        if (subblockSummaries.length >= SUBBLOCKS_PER_BLOCK) {
+          blockSummaries.push(await summarizer.summarize(subblockSummaries, BLOCK_TARGET_WORDS));
+          subblockSummaries = [];
+        }
+
+        rollupSummary = [...blockSummaries, ...subblockSummaries].join(" ");
+      }
+      session.compactContext?.(rollupSummary);
 
       return narration;
     },

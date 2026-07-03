@@ -8,6 +8,20 @@
       "description": "Thrown off balance by a sudden gravity flicker.",
       "severity": 2,
       "armorClassDelta": -1
+    },
+    {
+      "id": "kamehameha-blast",
+      "name": "Kamehameha Blast",
+      "description": "Struck head-on by a concentrated beam of ki.",
+      "severity": 4,
+      "currentHitPointsDelta": -15
+    },
+    {
+      "id": "bite-wound",
+      "name": "Bite Wound",
+      "description": "Punctured by the symbiote's fanged maw.",
+      "severity": 2,
+      "currentHitPointsDelta": -8
     }
   ],
   "items": [

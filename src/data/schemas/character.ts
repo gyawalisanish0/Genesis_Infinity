@@ -100,25 +100,44 @@ export type HitPoints = z.infer<typeof HitPointsSchema>;
  * description. This is the hard capability gate for tools/'s use_technique
  * action: a character can only attempt a technique that appears in this
  * list — checked structurally, before the attempt ever reaches rules/.
+ *
+ * `effectId` is optional and references an entry in the Experience's
+ * resolved effect pool (loaded.ruleset.effects) — the technique's
+ * pre-authored mechanical consequence on its target, applied by
+ * tools/'s applyUseTechnique when the attempt resolves as a full
+ * success. A technique with no `effectId` has no defined mechanical
+ * consequence yet (narration-only) — see docs/BACKEND_ARCHITECTURE.md's
+ * Effects & Mechanical Grounding section.
  */
 export const TechniqueDefSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  effectId: z.string().optional(),
 });
 export type TechniqueDef = z.infer<typeof TechniqueDefSchema>;
 
 /**
- * A mechanical debuff/effect definition an Experience can declare — the
- * ruleset-level pool tools/'s escalation system (rejectAction) draws from
- * as punishment for a character's repeated invalid action attempts.
- * `severity` (1-5, same scale as world.ts's EnvironmentalCode) gates which
- * effects are eligible to be picked at a given strike count: escalation
- * only allows drawing from severities up to a ceiling that rises with the
- * strike count, so punishment trends harsher the longer it's ignored
- * without being fully deterministic. Deltas are restricted to
- * armorClass/hitPoints.max — the only numeric combat fields every
- * CharacterSheet is guaranteed to have.
+ * A mechanical effect definition an Experience can declare — drawn on by
+ * tools/'s escalation system (rejectAction) as punishment for repeated
+ * invalid action attempts, by mechanical EnvironmentalCodes (world.ts) on
+ * arrival at a hazardous node, and by TechniqueDefSchema's `effectId` when
+ * a technique lands on a target. `severity` (1-5, same scale as world.ts's
+ * EnvironmentalCode) gates which effects are eligible to be picked at a
+ * given escalation strike count.
+ *
+ * Two different kinds of deltas, applied through two different mechanisms
+ * (see tools/'s applyEffect):
+ * - `armorClassDelta`/`maxHitPointsDelta` are *ongoing* modifiers — active
+ *   only while the effect hasn't expired (state/'s AppliedDebuff, timeline-
+ *   based duration), recomputed fresh on every state read. A standing
+ *   penalty, not a one-time change.
+ * - `currentHitPointsDelta` is a *permanent, one-shot* contribution — a
+ *   hit landing doesn't heal itself back once its "debuff" expires the way
+ *   a standing armor penalty would. Negative is damage, positive is a
+ *   direct heal-like effect; it's logged once (an `effect.applied` dtm
+ *   event) and accumulates forever, the same way item-based healing
+ *   already does (see state/'s computeEffectiveStats).
  */
 export const EffectDefSchema = z.object({
   id: z.string(),
@@ -127,6 +146,7 @@ export const EffectDefSchema = z.object({
   severity: z.number().int().min(1).max(5),
   armorClassDelta: z.number().int().optional(),
   maxHitPointsDelta: z.number().int().optional(),
+  currentHitPointsDelta: z.number().int().optional(),
 });
 export type EffectDef = z.infer<typeof EffectDefSchema>;
 
