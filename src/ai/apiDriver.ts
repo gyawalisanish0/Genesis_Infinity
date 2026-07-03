@@ -81,6 +81,16 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
+/**
+ * Replaces a stale tool-role message's content once its round has finished
+ * - the model already used the real result to produce its next message;
+ * keeping the full JSON blob around forever only grows every later
+ * request's payload for no ongoing benefit (get_scope's result in
+ * particular is one of the largest, most frequently-called results, and
+ * a turn or two later it no longer reflects current state anyway).
+ */
+const COMPACTED_TOOL_RESULT = '{"note":"omitted - superseded by a later tool call"}';
+
 class ApiChatSession implements ChatDriverSession {
   private messages: OpenAiMessage[];
 
@@ -92,6 +102,17 @@ class ApiChatSession implements ChatDriverSession {
   }
 
   async prompt(input: string, tools?: ToolDef[]): Promise<string> {
+    // Every tool-role message already in history belongs to a now-finished
+    // round (this turn's own tool calls haven't been pushed yet) - compact
+    // them before adding anything new. Correction-retry calls (no `tools`,
+    // see ai/index.ts) re-embed the relevant result directly in their
+    // prompt text, so nothing is lost by compacting here unconditionally.
+    for (const message of this.messages) {
+      if (message.role === "tool" && message.content !== COMPACTED_TOOL_RESULT) {
+        message.content = COMPACTED_TOOL_RESULT;
+      }
+    }
+
     this.messages.push({ role: "user", content: input });
 
     const toolsByName = new Map((tools ?? []).map((tool) => [tool.name, tool]));

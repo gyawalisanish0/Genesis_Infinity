@@ -928,6 +928,55 @@ design above for beta scope.
 - **`frontend/`** — the static web UI that drives `server/`'s API from a
   browser. See `docs/FRONTEND_ARCHITECTURE.md` for its design.
 
+### Context Efficiency
+
+Measured directly against the real fixture: a single user turn that
+resolves an `action` costs 4 sequential API calls (narrative tool-call
+round, `rules/`'s validator, narrative final round, `audit/`'s narration
+check) and ~5,150 tokens at turn 1 — growing ~270-300 tokens every
+subsequent turn, since the narrative session's chat history was never
+trimmed. Three targeted fixes, all measured against the real fixture
+rather than assumed:
+
+- **Scoped rules-validator state** (`ai/index.ts`'s `scopeStateToAction`) —
+  `rules/`'s `validate()` used to receive the *entire* `StateSnapshot`
+  (every character in the Experience) even though its judgment only ever
+  depends on the acting character and its target, if any. Now only those
+  are included. No effect in the 2-character `goku-vs-venom` fixture
+  (actor + target already covers the whole cast), but verified against a
+  synthetic 5-character snapshot: a 57% reduction, and the saving scales
+  with cast size, not just this fixture.
+- **Compacted stale tool-call results** (`apiDriver.ts`'s `ApiChatSession`)
+  — the largest per-turn growth driver was tool-call *results* (especially
+  `get_scope`'s full JSON blob) getting permanently baked into the
+  narrative session's history the moment they're returned, even after
+  they're superseded by a newer call describing current state. Every
+  `prompt()` call now first replaces any already-existing `tool`-role
+  message's content with a short fixed placeholder before adding anything
+  new — by definition, any `tool` message already in history belongs to a
+  finished round. Verified live: a ~1KB `get_scope` result from turn 1
+  shrinks to 52 bytes by the time turn 2's request is built.
+- **Skip the narration audit on clean outcomes** (`ai/index.ts`'s
+  `needsFullAudit`) — the separate LLM call to `audit/`'s
+  `NarrationAuditor` now only runs when at least one of the turn's
+  `action` calls was rejected or resolved `"neutral"` (didn't fully land)
+  — the cases where a model is actually tempted to narrate the success it
+  wanted rather than what happened. A turn where every action was a clean,
+  fully-successful outcome skips this call entirely, cutting one of the 4
+  calls (and its ~450 tokens) for the common case. The cheap, local
+  blank/leaked-tool-call-syntax check (`isInvalidNarration`) still always
+  runs regardless — only the costlier full consistency audit is
+  conditional. `dtm/`'s `turn.audited` event's `checked` field now
+  accurately reflects whether the full audit actually ran, not just
+  whether an action was attempted.
+
+**Deferred, not yet built:** periodic summarization of the narrative
+session's turn history itself (the existing "Summarization" feature above
+is scoped only to character background story) — the only fix that would
+*cap* context growth rather than reduce its slope. Needs its trigger
+granularity and hierarchy resolved before implementation; revisit once
+those are settled.
+
 ### Test Experience: Goku vs Venom — Null Void Showdown
 
 `examples/goku-vs-venom/` is the smoke-test fixture for the beta slice: Goku

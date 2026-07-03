@@ -11,7 +11,7 @@ import {
 } from "../tools/index.js";
 import { RuleValidator } from "../rules/index.js";
 import { NarrationAuditor } from "../audit/index.js";
-import { getState } from "../state/index.js";
+import { getState, type StateSnapshot } from "../state/index.js";
 import type { LlmDriver, ToolDef } from "./llmDriver.js";
 import { createLlamaCppDriver, type LlamaCppBackendConfig } from "./llamaCppDriver.js";
 import { createApiDriver, type ApiBackendConfig } from "./apiDriver.js";
@@ -44,6 +44,26 @@ const NULLISH_STRINGS = new Set(["null", "undefined", "none"]);
 function normalizeOptionalId(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   return NULLISH_STRINGS.has(value.trim().toLowerCase()) ? undefined : value;
+}
+
+/**
+ * Trims a StateSnapshot down to only the characters actually relevant to a
+ * proposed action (the actor, plus its target if any) before it's sent to
+ * rules/'s validator. `rules/`'s judgment only ever depends on those two
+ * characters' state - serializing every other character in the Experience
+ * into that prompt is dead weight that scales with cast size regardless of
+ * relevance (measured: ~1.7K tokens per call in a 2-character fixture,
+ * would scale linearly with a larger cast).
+ */
+function scopeStateToAction(state: StateSnapshot, action: Action): StateSnapshot {
+  const relevantIds = new Set<string>([action.characterId]);
+  if ("targetId" in action && action.targetId) {
+    relevantIds.add(action.targetId);
+  }
+  return {
+    ...state,
+    characters: state.characters.filter((c) => relevantIds.has(c.sheet.id)),
+  };
 }
 
 function describeAction(action: Action): string {
@@ -350,7 +370,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         );
         const validation = await ruleValidator.validate(
           { type: action.type, characterId: action.characterId, description: describeAction(action) },
-          state,
+          scopeStateToAction(state, action),
         );
         if (validation.outcome === "invalid") {
           const result = rejectAction(
@@ -399,10 +419,25 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
       // Only check turns where `action` was called — say/note_hazard/check
       // tools have no mechanical outcome a narration could contradict.
+      // Within that, the full LLM-based audit call is itself skipped when
+      // every action this turn was a clean, fully-successful outcome
+      // (result.success && outcome === "valid") — narration drift is far
+      // more likely on a rejected or "neutral" (didn't fully land) result,
+      // where a model is tempted to narrate the success it wanted rather
+      // than what actually happened. isInvalidNarration's cheap, local
+      // blank/leaked-syntax check still always runs regardless — this only
+      // skips the separate, costlier narrationAuditor.audit() API call.
+      const needsFullAudit = actionCalls.some((call) => {
+        const result = call.result as ActionResult | RejectionResult;
+        return !result.success || result.outcome === "neutral";
+      });
+      const auditOrTrust = () =>
+        needsFullAudit ? narrationAuditor.audit(narration, turnToolCalls) : Promise.resolve({ consistent: true as const });
+
       if (actionCalls.length > 0) {
         auditResult = isInvalidNarration(narration)
           ? { consistent: false, contradiction: invalidReason }
-          : await narrationAuditor.audit(narration, turnToolCalls);
+          : await auditOrTrust();
 
         while (!auditResult.consistent && retries < MAX_NARRATION_RETRIES) {
           retries += 1;
@@ -416,7 +451,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           narration = await session.prompt(correction);
           auditResult = isInvalidNarration(narration)
             ? { consistent: false, contradiction: invalidReason }
-            : await narrationAuditor.audit(narration, turnToolCalls);
+            : await auditOrTrust();
         }
 
         if (!auditResult.consistent) {
@@ -443,7 +478,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         payload: {
           narration,
           toolCalls: turnToolCalls,
-          checked: actionCalls.length > 0,
+          checked: actionCalls.length > 0 && needsFullAudit,
           consistent: auditResult.consistent,
           retries,
           usedFallback: actionCalls.length > 0 && !auditResult.consistent,
