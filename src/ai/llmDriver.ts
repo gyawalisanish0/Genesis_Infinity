@@ -44,6 +44,17 @@ export interface ChatDriverSession {
   promptForJson<T>(input: string, schema: JsonSchema): Promise<T>;
   /** Clears conversational history back to just the system prompt. */
   resetHistory(): void;
+  /**
+   * Collapses the session's entire history (since the system prompt) down
+   * to a single message containing `summaryText` — used by ai/'s narrative
+   * session to fold old turns into a running recap instead of letting
+   * conversational history grow forever (see docs/BACKEND_ARCHITECTURE.md's
+   * Context Efficiency section). Optional: a driver that can't or doesn't
+   * yet support this (llamaCppDriver.ts's local sessions, whose context is
+   * managed internally by node-llama-cpp) simply leaves it unimplemented —
+   * callers use `session.compactToSummary?.(...)`.
+   */
+  compactToSummary?(summaryText: string): void;
 }
 
 export interface LlmDriver {

@@ -11,6 +11,7 @@ import {
 } from "../tools/index.js";
 import { RuleValidator } from "../rules/index.js";
 import { NarrationAuditor } from "../audit/index.js";
+import { Summarizer } from "../summarizer/index.js";
 import { getState, type StateSnapshot } from "../state/index.js";
 import type { LlmDriver, ToolDef } from "./llmDriver.js";
 import { createLlamaCppDriver, type LlamaCppBackendConfig } from "./llamaCppDriver.js";
@@ -163,6 +164,25 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
   const ruleValidator = new RuleValidator(driver);
   const narrationAuditor = new NarrationAuditor(driver);
+  const summarizer = new Summarizer(driver);
+
+  // Context-efficiency: the narrative session's history would otherwise
+  // grow every turn forever (see docs/BACKEND_ARCHITECTURE.md's Context
+  // Efficiency section). Every SUBBLOCK_TURN_COUNT turns, recent
+  // narrations are compressed into one ~SUBBLOCK_TARGET_WORDS-word
+  // "subblock" summary; every SUBBLOCKS_PER_BLOCK subblocks, those are
+  // compressed again into one coarser "block" summary, so long-run growth
+  // stays bounded (logarithmic-ish) rather than accumulating one subblock
+  // per few turns forever. blockSummaries + subblockSummaries together are
+  // the full current recap, resent via compactToSummary each time either
+  // level rolls up.
+  const SUBBLOCK_TURN_COUNT = 5;
+  const SUBBLOCK_TARGET_WORDS = 50;
+  const SUBBLOCKS_PER_BLOCK = 10;
+  const BLOCK_TARGET_WORDS = 75;
+  let pendingNarrations: string[] = [];
+  let subblockSummaries: string[] = [];
+  let blockSummaries: string[] = [];
 
   const turn = { timestamp: 0 };
   let turnToolCalls: ToolCallRecord[] = [];
@@ -484,6 +504,19 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           usedFallback: actionCalls.length > 0 && !auditResult.consistent,
         },
       });
+
+      pendingNarrations.push(narration);
+      if (pendingNarrations.length >= SUBBLOCK_TURN_COUNT) {
+        subblockSummaries.push(await summarizer.summarize(pendingNarrations, SUBBLOCK_TARGET_WORDS));
+        pendingNarrations = [];
+
+        if (subblockSummaries.length >= SUBBLOCKS_PER_BLOCK) {
+          blockSummaries.push(await summarizer.summarize(subblockSummaries, BLOCK_TARGET_WORDS));
+          subblockSummaries = [];
+        }
+
+        session.compactToSummary?.([...blockSummaries, ...subblockSummaries].join(" "));
+      }
 
       return narration;
     },

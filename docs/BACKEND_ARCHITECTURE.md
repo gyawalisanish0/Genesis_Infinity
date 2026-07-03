@@ -970,12 +970,46 @@ rather than assumed:
   accurately reflects whether the full audit actually ran, not just
   whether an action was attempted.
 
-**Deferred, not yet built:** periodic summarization of the narrative
-session's turn history itself (the existing "Summarization" feature above
-is scoped only to character background story) — the only fix that would
-*cap* context growth rather than reduce its slope. Needs its trigger
-granularity and hierarchy resolved before implementation; revisit once
-those are settled.
+**Two-level turn-history summarization** (`src/summarizer/index.ts`'s
+`Summarizer`, wired into `ai/index.ts`'s turn loop) — the fix that actually
+*caps* narrative-session context growth long-term, rather than just
+reducing its slope like the three fixes above. Runs in its own isolated
+chat session, the same pattern as `rules/`'s `RuleValidator` and `audit/`'s
+`NarrationAuditor`:
+- Every `SUBBLOCK_TURN_COUNT` turns (5), the span's raw narrations are
+  compressed into one ~`SUBBLOCK_TARGET_WORDS`-word (50) "subblock"
+  summary, preserving concrete facts (who did what, outcomes, injuries,
+  location changes) and dropping flavor prose.
+- Every `SUBBLOCKS_PER_BLOCK` subblocks (10 — i.e. every 50 turns), those
+  subblock summaries are compressed again into one coarser
+  ~`BLOCK_TARGET_WORDS`-word (75) "block" summary, and the subblock list
+  resets — so growth is logarithmic-ish over a long session rather than
+  accumulating one 50-word subblock every 5 turns forever.
+- After either level rolls up, `session.compactToSummary()` — a new
+  optional `ChatDriverSession` method (`llmDriver.ts`) — replaces the
+  narrative session's *entire* history (since the system prompt) with one
+  message containing the full current recap (`[...blockSummaries,
+  ...subblockSummaries].join(" ")`). `dtm/` still holds the complete raw
+  history regardless — only what's sent to the model going forward is
+  reduced.
+- Implemented for the API backend (`apiDriver.ts`'s `ApiChatSession`).
+  Local `llamaCppDriver.ts` sessions don't implement `compactToSummary` yet
+  (node-llama-cpp's `LlamaChatSession` doesn't expose an equivalent
+  history-replace API) — the method is optional for exactly this reason,
+  called via `session.compactToSummary?.(...)`; the summarizer session is
+  still allocated on that backend so `createAiSession` doesn't need
+  backend-specific branching, but its output currently has no effect on
+  local sessions' own context. `llamaCppDriver.ts` bumped its pre-allocated
+  sequence count from 3 to 4 to accommodate the new summarizer session
+  (narrative/rules/audit/summarizer, one each).
+
+Verified against the real fixture with a mocked backend across 56
+simulated turns: the first subblock summary is generated at turn 5 and
+folded into the recap by turn 10; the 10th subblock triggers a block-level
+rollup at turn 50, resetting the subblock list; and the recap sent on
+turn 56's request correctly shows the block summary plus only the
+newest (11th) subblock, not the pre-rollup subblocks it replaced.
+`npm run typecheck` passes.
 
 ### Test Experience: Goku vs Venom — Null Void Showdown
 

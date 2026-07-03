@@ -185,6 +185,11 @@ class ApiChatSession implements ChatDriverSession {
   resetHistory(): void {
     this.messages = [this.messages[0]!];
   }
+
+  compactToSummary(summaryText: string): void {
+    const systemMessage = this.messages[0]!;
+    this.messages = [systemMessage, { role: "user", content: `[Recap of earlier turns]: ${summaryText}` }];
+  }
 }
 
 export function createApiDriver(config: ApiBackendConfig): LlmDriver {

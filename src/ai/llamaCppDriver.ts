@@ -97,12 +97,16 @@ export interface LlamaCppBackendConfig {
 
 /**
  * LlmDriver implementation backed by a local node-llama-cpp model.
- * Pre-allocates 3 sequences on one context (matching ai/'s narrative/
- * rules/audit sessions) - contextSize is bounded explicitly rather than
- * "auto" (which tries to size up to the model's full trained context,
- * often 128K+ tokens) for the same reason `sequences` is bounded: either
- * gap can exhaust available RAM or, if too small, overflow mid-turn (see
- * the 4096 -> 8192 bump after a real crash on a Hugging Face CPU Space).
+ * Pre-allocates 4 sequences on one context (matching ai/'s narrative/
+ * rules/audit/summarizer sessions) - contextSize is bounded explicitly
+ * rather than "auto" (which tries to size up to the model's full trained
+ * context, often 128K+ tokens) for the same reason `sequences` is bounded:
+ * either gap can exhaust available RAM or, if too small, overflow mid-turn
+ * (see the 4096 -> 8192 bump after a real crash on a Hugging Face CPU
+ * Space). Local sessions don't yet implement compactToSummary (see
+ * llmDriver.ts) - the summarizer session is still allocated so
+ * ai/'s createAiSession doesn't need backend-specific branching, but its
+ * summaries currently have no effect on local sessions' own context.
  */
 export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promise<LlmDriver> {
   const cpuQuota = detectCpuQuota();
@@ -115,15 +119,20 @@ export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promi
   console.log(`[cpu-quota] llama.maxThreads resolved to: ${llama.maxThreads}`);
 
   const model = await llama.loadModel({ modelPath: config.modelPath });
-  const context = await model.createContext({ contextSize: 8192, sequences: 3 });
+  const context = await model.createContext({ contextSize: 8192, sequences: 4 });
 
-  const sequences: LlamaContextSequence[] = [context.getSequence(), context.getSequence(), context.getSequence()];
+  const sequences: LlamaContextSequence[] = [
+    context.getSequence(),
+    context.getSequence(),
+    context.getSequence(),
+    context.getSequence(),
+  ];
   let nextSequenceIndex = 0;
 
   return {
     createChatSession(systemPrompt: string): ChatDriverSession {
       if (nextSequenceIndex >= sequences.length) {
-        throw new Error("llamaCppDriver: no more sequences available (only 3 pre-allocated)");
+        throw new Error(`llamaCppDriver: no more sequences available (only ${sequences.length} pre-allocated)`);
       }
       const sequence = sequences[nextSequenceIndex++];
       return new LlamaCppChatSession(llama, sequence, systemPrompt);
