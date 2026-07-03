@@ -91,6 +91,35 @@ export interface ToolCallRecord {
   result: unknown;
 }
 
+export interface TurnResult {
+  narration: string;
+  /** A reasoning model's chain-of-thought for this turn, if any (see extractReasoning). */
+  reasoning?: string;
+}
+
+const THINK_BLOCK_PATTERN = /<think>([\s\S]*?)<\/think>/gi;
+
+/**
+ * Reasoning models (e.g. DeepSeek R1) emit their chain-of-thought as a
+ * literal <think>...</think> block inline in the same message content as
+ * the actual reply - there's no separate API field to route it through for
+ * models exposed this way (observed live via Hugging Face's router). Strips
+ * it out of what's treated as narration and returns it separately so
+ * callers can show it as optional, clearly-labeled context (e.g. a
+ * collapsible section) rather than either leaking raw reasoning into the
+ * player-facing narration or silently discarding it.
+ */
+function extractReasoning(text: string): { reasoning?: string; narration: string } {
+  const reasoningParts: string[] = [];
+  const narration = text
+    .replace(THINK_BLOCK_PATTERN, (_match, inner: string) => {
+      reasoningParts.push(inner.trim());
+      return "";
+    })
+    .trim();
+  return reasoningParts.length > 0 ? { reasoning: reasoningParts.join("\n\n"), narration } : { narration };
+}
+
 /**
  * How many times NarrationAuditor is given a chance to regenerate before
  * falling back to a deterministic, tool-result-only sentence.
@@ -146,7 +175,7 @@ export interface AiSessionOptions {
 
 export interface AiSession {
   /** Sends one user turn through the agentic loop (check tools, then narration or an action). */
-  prompt(input: string, turnTimestamp: number): Promise<string>;
+  prompt(input: string, turnTimestamp: number): Promise<TurnResult>;
   dispose(): Promise<void>;
 }
 
@@ -415,7 +444,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       turn.timestamp = turnTimestamp;
       turnToolCalls = [];
 
-      let narration = await session.prompt(input, tools);
+      let { reasoning, narration } = extractReasoning(await session.prompt(input, tools));
 
       const actionCalls = turnToolCalls.filter((call) => call.name === "action");
       let auditResult = { consistent: true } as Awaited<ReturnType<NarrationAuditor["audit"]>>;
@@ -468,7 +497,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           ].join("\n");
           // No `tools` here — this must not re-trigger tool calls and
           // re-apply state a second time, only regenerate the description.
-          narration = await session.prompt(correction);
+          ({ reasoning, narration } = extractReasoning(await session.prompt(correction)));
           auditResult = isInvalidNarration(narration)
             ? { consistent: false, contradiction: invalidReason }
             : await auditOrTrust();
@@ -476,18 +505,22 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
 
         if (!auditResult.consistent) {
           narration = buildFallbackNarration(actionCalls);
+          reasoning = undefined; // a deterministic fallback sentence has no corresponding reasoning
         }
       } else if (isInvalidNarration(narration)) {
         // No action this turn (say/note_hazard/check only), but the model
         // still returned no usable text — ask once more instead of leaving
         // the player with an empty or garbled response.
-        narration = await session.prompt(
-          "Your last reply had no narration text (or wasn't valid prose). Describe what happened in plain text, with no tool-call syntax.",
-        );
+        ({ reasoning, narration } = extractReasoning(
+          await session.prompt(
+            "Your last reply had no narration text (or wasn't valid prose). Describe what happened in plain text, with no tool-call syntax.",
+          ),
+        ));
         if (isInvalidNarration(narration)) {
           // Guarantees the player is never shown a blank or garbled reply,
           // even when the model repeatedly fails to produce real prose.
           narration = "The Engine couldn't produce a response for that — try rephrasing what your character does.";
+          reasoning = undefined;
         }
       }
 
@@ -525,7 +558,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       }
       session.compactContext?.(rollupSummary);
 
-      return narration;
+      return { narration, reasoning };
     },
     async dispose() {
       await driver.dispose();

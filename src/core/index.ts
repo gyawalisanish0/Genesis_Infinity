@@ -1,6 +1,6 @@
 import { loadExperience, type LoadedExperience } from "../data/loaders/experience.js";
 import { Dtm } from "../dtm/index.js";
-import { createAiSession, type BackendConfig, type ToolCallRecord } from "../ai/index.js";
+import { createAiSession, type BackendConfig, type ToolCallRecord, type TurnResult } from "../ai/index.js";
 import type { ToolContext } from "../tools/index.js";
 import { createTimeline } from "../timeline/index.js";
 
@@ -40,7 +40,7 @@ export interface Engine {
    */
   currentTimelineUnit(): number;
   /** Sends one user turn through the agentic loop, advancing engine time by one. */
-  takeTurn(input: string): Promise<string>;
+  takeTurn(input: string): Promise<TurnResult>;
   dispose(): Promise<void>;
 }
 
