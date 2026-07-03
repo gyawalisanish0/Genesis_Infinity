@@ -913,18 +913,35 @@ design above for beta scope.
   map and won't appear in the frontend's picker. Adding a new provider
   later is one entry in this file plus a new secret, no frontend changes
   needed (it's discovered automatically via `GET /api/backend/providers`).
-- **`server/apiModelCatalogue.ts`** — per-provider free-model listers,
-  keyed the same way `apiProviders.ts` is. Currently only
-  `openrouter` has one (`listFreeOpenRouterModels`, hitting OpenRouter's
-  public, unauthenticated `GET /api/v1/models` and filtering to
-  `pricing.prompt === "0" && pricing.completion === "0"` plus
-  `supported_parameters` including `"tools"` — a model this engine can't
-  drive tool calls with can't run a turn regardless of price). A provider
-  with no lister here just returns `[]`, which the frontend takes as "no
-  catalogue, fall back to manual entry" rather than an error. Added after
-  a real user typed a bare word ("Llama") into the old free-text-only
-  model-id field and got a `400` from OpenRouter — a raw text field for a
-  provider's exact model slug isn't a workable UI on its own.
+- **`server/apiModelCatalogue.ts`** — per-provider model listers, keyed the
+  same way `apiProviders.ts` is, populating the frontend's model dropdown.
+  A provider with no lister here just returns `[]`, which the frontend
+  takes as "no catalogue, fall back to manual entry" rather than an error.
+  Added after a real user typed a bare word ("Llama") into the old
+  free-text-only model-id field and got a `400` from OpenRouter — a raw
+  text field for a provider's exact model slug isn't a workable UI on its
+  own. Two listers today, both requiring tool-calling support (a model
+  this engine can't drive tool calls with can't run a turn regardless of
+  price), but differing in what else they filter on:
+  - `listFreeOpenRouterModels` — hits OpenRouter's public, unauthenticated
+    `GET /api/v1/models` and additionally filters to
+    `pricing.prompt === "0" && pricing.completion === "0"` plus
+    `supported_parameters` including `"tools"` — this is OpenRouter's real
+    always-free tier, so the frontend labels the dropdown "Free model" for
+    this provider.
+  - `listHuggingFaceModels` — hits HF's Inference Providers router's
+    public, unauthenticated `GET /v1/models` (see
+    [Hub API docs](https://huggingface.co/docs/inference-providers/en/hub-api#list-openai-compatible-models)),
+    which returns each model alongside a `providers[]` array (one entry per
+    backing provider, e.g. Together/Fireworks/Novita) carrying a
+    `supports_tools` flag per provider — filters to models where *any*
+    listed provider has it. Deliberately does **not** filter on the
+    per-provider `is_free` flag the way OpenRouter's lister filters on
+    price: `is_free` marks only a temporary promo, empirically `false` for
+    effectively every model (0 of 119 at the time this was written) — HF
+    billing is usage-based against the configured `HF_API_KEY`'s own
+    credits, not a real free tier, so the frontend labels this provider's
+    dropdown "Suggested model" instead of "Free model."
 - **`frontend/`** — the static web UI that drives `server/`'s API from a
   browser. See `docs/FRONTEND_ARCHITECTURE.md` for its design.
 

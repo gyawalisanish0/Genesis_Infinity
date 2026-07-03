@@ -12,6 +12,11 @@ interface OpenRouterModel {
   supported_parameters?: string[];
 }
 
+interface HuggingFaceRouterModel {
+  id: string;
+  providers: Array<{ supports_tools?: boolean }>;
+}
+
 /**
  * Free, tool-calling-capable models from OpenRouter's public model list -
  * this engine's turn loop requires tool calling (get_scope, action, etc.),
@@ -37,12 +42,34 @@ async function listFreeOpenRouterModels(): Promise<ApiModelOption[]> {
 }
 
 /**
- * Per-provider free-model listers. A provider with no entry here (e.g.
- * Hugging Face, which has no equivalent public "list free models" endpoint)
- * simply returns an empty list - the frontend falls back to manual model-id
- * entry for those.
+ * Tool-calling-capable models from Hugging Face's Inference Providers
+ * router (https://router.huggingface.co/v1/models, public/no-auth, see
+ * docs/BACKEND_ARCHITECTURE.md) - same tool-calling requirement as
+ * OpenRouter's lister, but no "free" filter: unlike OpenRouter's real
+ * always-free tier, HF's per-provider `is_free` flag marks only a
+ * temporary promo and is false for effectively every model, so filtering
+ * on it would always yield an empty list. A model qualifies here if *any*
+ * of its listed providers supports tool calling - actually using a chosen
+ * model still costs the configured HF_API_KEY's usual HF credits.
+ */
+async function listHuggingFaceModels(): Promise<ApiModelOption[]> {
+  const response = await fetch("https://router.huggingface.co/v1/models");
+  if (!response.ok) {
+    throw new Error(`Hugging Face model list failed (HTTP ${response.status})`);
+  }
+  const data = (await response.json()) as { data: HuggingFaceRouterModel[] };
+  return data.data
+    .filter((model) => model.providers.some((provider) => provider.supports_tools))
+    .map((model) => ({ id: model.id, label: model.id }));
+}
+
+/**
+ * Per-provider model listers, populating the frontend's model dropdown.
+ * A provider with no entry here would return an empty list, falling back
+ * to manual model-id entry - currently every known provider has one.
  */
 const MODEL_LISTERS: Partial<Record<ApiProviderId, () => Promise<ApiModelOption[]>>> = {
+  huggingface: listHuggingFaceModels,
   openrouter: listFreeOpenRouterModels,
 };
 
