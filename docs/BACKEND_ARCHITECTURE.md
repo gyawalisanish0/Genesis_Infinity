@@ -1009,16 +1009,23 @@ the same pattern as `rules/`'s `RuleValidator` and `audit/`'s
   is what `compactContext` receives on a rollup turn. `dtm/` still holds
   the complete raw history regardless — only what's sent to the model
   going forward is reduced.
-- Implemented for the API backend (`apiDriver.ts`'s `ApiChatSession`).
-  Local `llamaCppDriver.ts` sessions don't implement `compactContext` yet
-  (node-llama-cpp's `LlamaChatSession` doesn't expose an equivalent
-  history-replace API) — the method is optional for exactly this reason,
-  called via `session.compactContext?.(...)`; the summarizer session is
-  still allocated on that backend so `createAiSession` doesn't need
-  backend-specific branching, but its output currently has no effect on
-  local sessions' own context. `llamaCppDriver.ts` bumped its pre-allocated
-  sequence count from 3 to 4 to accommodate the new summarizer session
-  (narrative/rules/audit/summarizer, one each).
+- **Implemented for both backends.** `apiDriver.ts`'s `ApiChatSession`
+  mutates its flat message array directly. `llamaCppDriver.ts`'s
+  `LlamaCppChatSession` uses `LlamaChatSession`'s real
+  `getChatHistory()`/`setChatHistory()` API — initially assumed not to
+  exist (an earlier version of this doc said local sessions couldn't
+  support this), but node-llama-cpp does expose it. Its representation
+  differs from the API driver's flat array: tool-call results live as
+  `result` fields on `ChatModelFunctionCall` segments nested inside each
+  `ChatModelResponse`, not as separate top-level messages — but `result`
+  is a plain, freely-rewritable field, so the same placeholder-compaction
+  and full-history-replace logic both apply, just walking a nested
+  structure instead of a flat one. `compactContext` stays optional on the
+  `ChatDriverSession` interface for any future driver that genuinely can't
+  support it, called via `session.compactContext?.(...)`, but both
+  current backends implement it fully. `llamaCppDriver.ts`'s
+  pre-allocated sequence count (3 → 4, for the new summarizer session)
+  now actually pays off on that backend too, not just the API one.
 
 Verified against the real fixture with a mocked backend across 56
 simulated turns: the first subblock summary is generated at turn 5 and
@@ -1030,8 +1037,13 @@ Re-verified after unifying into `compactContext`: turns 1-4 within a
 window still get their own tool results compacted turn-by-turn, and
 turn 5's rollup still fully replaces history (turn 6's request shows just
 3 messages: system, recap, new input) — confirming the merge changed only
-where the logic lives, not its observed behavior. `npm run typecheck`
-passes.
+where the logic lives, not its observed behavior. `llamaCppDriver.ts`'s
+implementation was verified separately as a standalone data-transformation
+test against realistic `ChatHistoryItem` shapes (a real GGUF model can't
+be loaded in this environment): confirmed a `ChatModelFunctionCall`
+segment's `result` field is correctly replaced with the placeholder on an
+ordinary turn, and that a rollup call correctly collapses history down to
+exactly `[systemMessage, recap]`. `npm run typecheck` passes.
 
 ### Test Experience: Goku vs Venom — Null Void Showdown
 

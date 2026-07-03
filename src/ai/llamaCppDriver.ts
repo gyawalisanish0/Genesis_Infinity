@@ -3,11 +3,23 @@ import {
   getLlama,
   defineChatSessionFunction,
   LlamaChatSession,
+  type ChatHistoryItem,
+  type ChatSystemMessage,
   type Llama,
   type LlamaContextSequence,
   type LlamaJsonSchemaGrammar,
 } from "node-llama-cpp";
 import type { ChatDriverSession, JsonSchema, LlmDriver, ToolDef } from "./llmDriver.js";
+
+/**
+ * Mirrors apiDriver.ts's COMPACTED_TOOL_RESULT placeholder - same
+ * reasoning, different representation. LlamaChatSession has no flat
+ * message array to mutate; tool-call results live as `result` fields on
+ * ChatModelFunctionCall segments nested inside each ChatModelResponse
+ * (see node-llama-cpp's types.d.ts), reachable and freely rewritable via
+ * getChatHistory()/setChatHistory().
+ */
+const COMPACTED_TOOL_RESULT = { note: "omitted - superseded by a later tool call" };
 
 /**
  * Detects the container's actual CPU quota from cgroup limits, if any.
@@ -89,6 +101,32 @@ class LlamaCppChatSession implements ChatDriverSession {
   resetHistory(): void {
     this.session.resetChatHistory();
   }
+
+  compactContext(summary?: string): void {
+    const history = this.session.getChatHistory();
+
+    if (summary !== undefined) {
+      // A rollup turn (see ai/'s Summarizer usage) - the new recap
+      // supersedes everything, so a full replace subsumes the plain
+      // per-turn compaction below, same as apiDriver.ts's ApiChatSession.
+      const systemMessage = history.find((item): item is ChatSystemMessage => item.type === "system");
+      const recap: ChatHistoryItem = { type: "user", text: `[Recap of earlier turns]: ${summary}` };
+      this.session.setChatHistory(systemMessage ? [systemMessage, recap] : [recap]);
+      return;
+    }
+
+    // Every other turn: compact this turn's own tool-call results once
+    // they've served their purpose, same reasoning as apiDriver.ts.
+    for (const item of history) {
+      if (item.type !== "model") continue;
+      for (const segment of item.response) {
+        if (typeof segment === "object" && segment.type === "functionCall" && segment.result !== COMPACTED_TOOL_RESULT) {
+          segment.result = COMPACTED_TOOL_RESULT;
+        }
+      }
+    }
+    this.session.setChatHistory(history);
+  }
 }
 
 export interface LlamaCppBackendConfig {
@@ -103,10 +141,10 @@ export interface LlamaCppBackendConfig {
  * context, often 128K+ tokens) for the same reason `sequences` is bounded:
  * either gap can exhaust available RAM or, if too small, overflow mid-turn
  * (see the 4096 -> 8192 bump after a real crash on a Hugging Face CPU
- * Space). Local sessions don't yet implement compactContext (see
- * llmDriver.ts) - the summarizer session is still allocated so
- * ai/'s createAiSession doesn't need backend-specific branching, but its
- * summaries currently have no effect on local sessions' own context.
+ * Space). Local sessions implement compactContext (see llmDriver.ts) via
+ * LlamaChatSession's getChatHistory()/setChatHistory() - the fourth
+ * pre-allocated sequence is for ai/'s summarizer session, whose output
+ * now takes effect on local sessions too, same as the API backend.
  */
 export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promise<LlmDriver> {
   const cpuQuota = detectCpuQuota();
