@@ -505,7 +505,13 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         },
       });
 
+      // Single end-of-turn context-maintenance step (see llmDriver.ts's
+      // compactContext doc comment) - called exactly once per turn, every
+      // turn, so there's one pipeline deciding what to shrink and when,
+      // not a driver-internal mechanism plus a separate caller-triggered
+      // one running independently of each other.
       pendingNarrations.push(narration);
+      let rollupSummary: string | undefined;
       if (pendingNarrations.length >= SUBBLOCK_TURN_COUNT) {
         subblockSummaries.push(await summarizer.summarize(pendingNarrations, SUBBLOCK_TARGET_WORDS));
         pendingNarrations = [];
@@ -515,8 +521,9 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           subblockSummaries = [];
         }
 
-        session.compactToSummary?.([...blockSummaries, ...subblockSummaries].join(" "));
+        rollupSummary = [...blockSummaries, ...subblockSummaries].join(" ");
       }
+      session.compactContext?.(rollupSummary);
 
       return narration;
     },

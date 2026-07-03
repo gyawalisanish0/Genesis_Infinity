@@ -946,16 +946,14 @@ rather than assumed:
   (actor + target already covers the whole cast), but verified against a
   synthetic 5-character snapshot: a 57% reduction, and the saving scales
   with cast size, not just this fixture.
-- **Compacted stale tool-call results** (`apiDriver.ts`'s `ApiChatSession`)
-  — the largest per-turn growth driver was tool-call *results* (especially
-  `get_scope`'s full JSON blob) getting permanently baked into the
-  narrative session's history the moment they're returned, even after
-  they're superseded by a newer call describing current state. Every
-  `prompt()` call now first replaces any already-existing `tool`-role
-  message's content with a short fixed placeholder before adding anything
-  new — by definition, any `tool` message already in history belongs to a
-  finished round. Verified live: a ~1KB `get_scope` result from turn 1
-  shrinks to 52 bytes by the time turn 2's request is built.
+- **Compacted stale tool-call results** — the largest per-turn growth
+  driver was tool-call *results* (especially `get_scope`'s full JSON blob)
+  getting permanently baked into the narrative session's history the
+  moment they're returned, even after they're superseded by a newer call
+  describing current state. This is one part of the single unified
+  `compactContext` pipeline described below, not a separate mechanism —
+  see there for the full design. Verified live: a ~1KB `get_scope` result
+  from turn 1 shrinks to 52 bytes by the time turn 2's request is built.
 - **Skip the narration audit on clean outcomes** (`ai/index.ts`'s
   `needsFullAudit`) — the separate LLM call to `audit/`'s
   `NarrationAuditor` now only runs when at least one of the turn's
@@ -970,11 +968,33 @@ rather than assumed:
   accurately reflects whether the full audit actually ran, not just
   whether an action was attempted.
 
+**One unified `compactContext` pipeline, not two separate mechanisms.**
+Per-turn tool-result compaction and multi-turn summarization were
+initially built as two independent things — an always-on step hidden
+inside `apiDriver.ts`'s `prompt()`, and a separately-triggered step in
+`ai/index.ts` — which overlapped wastefully (a rollup turn would discard
+history the other mechanism had just carefully compacted) and split "what
+gets shrunk and when" across two files with two different triggers. Both
+are now one method, `ChatDriverSession.compactContext(summary?: string)`
+(`llmDriver.ts`), called exactly once per turn from `ai/index.ts`'s turn
+loop and nowhere else — no automatic/hidden compaction happens inside
+`prompt()` itself:
+- Called with no argument (an ordinary turn): compacts that turn's own
+  tool-call results to a short fixed placeholder now that they've served
+  their purpose (fed the model's own next reply) — keeping the full JSON
+  blob around forever only grows every later request for no ongoing
+  benefit.
+- Called with `summary` (a rollup turn — see the summarization design
+  below): replaces the *entire* history (since the system prompt) with one
+  message containing it, superseding the plain per-turn compaction for
+  that call, since a recap already accounts for everything it replaces.
+
 **Two-level turn-history summarization** (`src/summarizer/index.ts`'s
-`Summarizer`, wired into `ai/index.ts`'s turn loop) — the fix that actually
-*caps* narrative-session context growth long-term, rather than just
-reducing its slope like the three fixes above. Runs in its own isolated
-chat session, the same pattern as `rules/`'s `RuleValidator` and `audit/`'s
+`Summarizer`, wired into `ai/index.ts`'s turn loop) is what decides when
+`compactContext` gets a `summary` — the fix that actually *caps*
+narrative-session context growth long-term, rather than just reducing its
+slope like the three fixes above. Runs in its own isolated chat session,
+the same pattern as `rules/`'s `RuleValidator` and `audit/`'s
 `NarrationAuditor`:
 - Every `SUBBLOCK_TURN_COUNT` turns (5), the span's raw narrations are
   compressed into one ~`SUBBLOCK_TARGET_WORDS`-word (50) "subblock"
@@ -985,18 +1005,15 @@ chat session, the same pattern as `rules/`'s `RuleValidator` and `audit/`'s
   ~`BLOCK_TARGET_WORDS`-word (75) "block" summary, and the subblock list
   resets — so growth is logarithmic-ish over a long session rather than
   accumulating one 50-word subblock every 5 turns forever.
-- After either level rolls up, `session.compactToSummary()` — a new
-  optional `ChatDriverSession` method (`llmDriver.ts`) — replaces the
-  narrative session's *entire* history (since the system prompt) with one
-  message containing the full current recap (`[...blockSummaries,
-  ...subblockSummaries].join(" ")`). `dtm/` still holds the complete raw
-  history regardless — only what's sent to the model going forward is
-  reduced.
+- The resulting recap (`[...blockSummaries, ...subblockSummaries].join(" ")`)
+  is what `compactContext` receives on a rollup turn. `dtm/` still holds
+  the complete raw history regardless — only what's sent to the model
+  going forward is reduced.
 - Implemented for the API backend (`apiDriver.ts`'s `ApiChatSession`).
-  Local `llamaCppDriver.ts` sessions don't implement `compactToSummary` yet
+  Local `llamaCppDriver.ts` sessions don't implement `compactContext` yet
   (node-llama-cpp's `LlamaChatSession` doesn't expose an equivalent
   history-replace API) — the method is optional for exactly this reason,
-  called via `session.compactToSummary?.(...)`; the summarizer session is
+  called via `session.compactContext?.(...)`; the summarizer session is
   still allocated on that backend so `createAiSession` doesn't need
   backend-specific branching, but its output currently has no effect on
   local sessions' own context. `llamaCppDriver.ts` bumped its pre-allocated
@@ -1009,7 +1026,12 @@ folded into the recap by turn 10; the 10th subblock triggers a block-level
 rollup at turn 50, resetting the subblock list; and the recap sent on
 turn 56's request correctly shows the block summary plus only the
 newest (11th) subblock, not the pre-rollup subblocks it replaced.
-`npm run typecheck` passes.
+Re-verified after unifying into `compactContext`: turns 1-4 within a
+window still get their own tool results compacted turn-by-turn, and
+turn 5's rollup still fully replaces history (turn 6's request shows just
+3 messages: system, recap, new input) — confirming the merge changed only
+where the logic lives, not its observed behavior. `npm run typecheck`
+passes.
 
 ### Test Experience: Goku vs Venom — Null Void Showdown
 

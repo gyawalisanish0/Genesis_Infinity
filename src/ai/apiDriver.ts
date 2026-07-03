@@ -102,17 +102,6 @@ class ApiChatSession implements ChatDriverSession {
   }
 
   async prompt(input: string, tools?: ToolDef[]): Promise<string> {
-    // Every tool-role message already in history belongs to a now-finished
-    // round (this turn's own tool calls haven't been pushed yet) - compact
-    // them before adding anything new. Correction-retry calls (no `tools`,
-    // see ai/index.ts) re-embed the relevant result directly in their
-    // prompt text, so nothing is lost by compacting here unconditionally.
-    for (const message of this.messages) {
-      if (message.role === "tool" && message.content !== COMPACTED_TOOL_RESULT) {
-        message.content = COMPACTED_TOOL_RESULT;
-      }
-    }
-
     this.messages.push({ role: "user", content: input });
 
     const toolsByName = new Map((tools ?? []).map((tool) => [tool.name, tool]));
@@ -186,9 +175,28 @@ class ApiChatSession implements ChatDriverSession {
     this.messages = [this.messages[0]!];
   }
 
-  compactToSummary(summaryText: string): void {
+  compactContext(summary?: string): void {
     const systemMessage = this.messages[0]!;
-    this.messages = [systemMessage, { role: "user", content: `[Recap of earlier turns]: ${summaryText}` }];
+
+    if (summary !== undefined) {
+      // A rollup turn (see ai/'s Summarizer usage) - the new recap
+      // supersedes everything, tool results included, so a full replace
+      // subsumes the plain per-turn compaction below.
+      this.messages = [systemMessage, { role: "user", content: `[Recap of earlier turns]: ${summary}` }];
+      return;
+    }
+
+    // Every other turn: compact this turn's own tool-role messages once
+    // they've served their purpose (feeding the model's own next reply) -
+    // keeping the full JSON blob around forever only grows every later
+    // request's payload for no ongoing benefit (get_scope's result in
+    // particular is one of the largest, most frequently-called results,
+    // and a turn or two later it no longer reflects current state anyway).
+    for (const message of this.messages) {
+      if (message.role === "tool" && message.content !== COMPACTED_TOOL_RESULT) {
+        message.content = COMPACTED_TOOL_RESULT;
+      }
+    }
   }
 }
 

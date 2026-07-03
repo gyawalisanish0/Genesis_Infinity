@@ -103,7 +103,7 @@ export interface LlamaCppBackendConfig {
  * context, often 128K+ tokens) for the same reason `sequences` is bounded:
  * either gap can exhaust available RAM or, if too small, overflow mid-turn
  * (see the 4096 -> 8192 bump after a real crash on a Hugging Face CPU
- * Space). Local sessions don't yet implement compactToSummary (see
+ * Space). Local sessions don't yet implement compactContext (see
  * llmDriver.ts) - the summarizer session is still allocated so
  * ai/'s createAiSession doesn't need backend-specific branching, but its
  * summaries currently have no effect on local sessions' own context.
