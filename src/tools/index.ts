@@ -352,6 +352,49 @@ function applyTechniqueEffect(
   });
 }
 
+/**
+ * If the technique is declared to relocate its user onto the target's
+ * node (TechniqueDefSchema's `relocatesToTarget` — e.g. Instant
+ * Transmission) and it actually landed (outcome "valid", target named and
+ * currently resolvable), moves the actor there directly via the same
+ * `entity.moved` event `move` uses — bypassing move's graph-adjacency
+ * check entirely, since a technique like this is defined by not needing
+ * an adjacent path. A "neutral" outcome, no target, an unresolvable
+ * target, or a technique without this flag leaves position untouched,
+ * same as before this existed.
+ */
+function applyTechniqueRelocation(
+  ctx: ToolContext,
+  action: Extract<Action, { type: "use_technique" }>,
+  outcome: ActionOutcome,
+): void {
+  if (outcome !== "valid" || !action.targetId) {
+    return;
+  }
+
+  const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
+  const technique = actorSheet?.techniques.find((t) => t.id === action.techniqueId);
+  if (!technique?.relocatesToTarget) {
+    return;
+  }
+
+  const state = getState(ctx.dtm, ctx.loaded, ctx.world, action.timestamp, ctx.timeline.currentUnit());
+  const targetNodeId = state.characters.find((c) => c.sheet.id === action.targetId)?.nodeId;
+  if (!targetNodeId) {
+    return; // null fallback: target not resolvable, nothing to relocate to
+  }
+
+  ctx.dtm.append({
+    experienceId: ctx.loaded.experience.id,
+    timestamp: action.timestamp,
+    type: "entity.moved",
+    entityId: action.characterId,
+    nodeId: targetNodeId,
+    payload: { outcome, viaTechniqueId: action.techniqueId },
+  });
+  applyEnvironmentalEffects(ctx, action.characterId, targetNodeId, action.timestamp);
+}
+
 function applyUseTechnique(
   ctx: ToolContext,
   action: Extract<Action, { type: "use_technique" }>,
@@ -365,6 +408,7 @@ function applyUseTechnique(
     payload: { techniqueId: action.techniqueId, targetId: action.targetId, outcome },
   });
   applyTechniqueEffect(ctx, action, outcome);
+  applyTechniqueRelocation(ctx, action, outcome);
   return { success: true, techniqueId: action.techniqueId, outcome };
 }
 

@@ -34,6 +34,7 @@ const el = {
   modelApiForm: document.getElementById("model-api-form"),
   modelApiProvider: document.getElementById("model-api-provider"),
   modelApiSelectWrap: document.getElementById("model-api-select-wrap"),
+  modelApiSelectLabel: document.getElementById("model-api-select-label"),
   modelApiModelSelect: document.getElementById("model-api-model-select"),
   modelApiManualLabel: document.getElementById("model-api-manual-label"),
   modelApiInput: document.getElementById("model-api-input"),
@@ -410,9 +411,12 @@ async function loadApiProviders() {
   if (hasProviders) await loadApiModelsForProvider(el.modelApiProvider.value);
 }
 
-// Populates the free-model dropdown for a provider, if that provider has a
-// public catalogue (only OpenRouter does today - see apiModelCatalogue.ts).
-// Falls back to manual model-id entry (the only option) when it doesn't.
+// Populates the model dropdown for a provider, if that provider has a
+// public catalogue (see apiModelCatalogue.ts). Falls back to manual
+// model-id entry (the only option) when it doesn't. Only OpenRouter's list
+// is actually free (its zero-cost tier) - Hugging Face's list is filtered
+// to tool-calling-capable models but still billed through the user's own
+// HF_API_KEY, so the label says "Suggested" there instead of "Free".
 async function loadApiModelsForProvider(provider) {
   el.modelApiModelSelect.innerHTML = "";
   // Stale manual text must never silently outlive a provider switch and
@@ -427,6 +431,7 @@ async function loadApiModelsForProvider(provider) {
   }
   const hasModels = models.length > 0;
   el.modelApiSelectWrap.classList.toggle("hidden", !hasModels);
+  el.modelApiSelectLabel.textContent = provider === "openrouter" ? "Free model" : "Suggested model";
   el.modelApiManualLabel.textContent = hasModels ? "Or enter a model id manually" : "Model id";
   el.modelApiInput.required = !hasModels;
   for (const model of models) {

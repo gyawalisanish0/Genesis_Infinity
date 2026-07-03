@@ -108,12 +108,22 @@ export type HitPoints = z.infer<typeof HitPointsSchema>;
  * success. A technique with no `effectId` has no defined mechanical
  * consequence yet (narration-only) — see docs/BACKEND_ARCHITECTURE.md's
  * Effects & Mechanical Grounding section.
+ *
+ * `relocatesToTarget` is optional and declares that landing this
+ * technique on a named target also moves the actor onto the target's
+ * current node (e.g. Instant Transmission) — applied by tools/'s
+ * applyUseTechnique the same way `effectId` is, bypassing the separate
+ * `move` action's graph-adjacency check entirely, since a technique like
+ * this is defined by not needing an adjacent path. A technique with no
+ * `relocatesToTarget` never moves its user — narration-only, same as
+ * before this existed.
  */
 export const TechniqueDefSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
   effectId: z.string().optional(),
+  relocatesToTarget: z.boolean().optional(),
 });
 export type TechniqueDef = z.infer<typeof TechniqueDefSchema>;
 

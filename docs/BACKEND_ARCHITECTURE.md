@@ -913,18 +913,35 @@ design above for beta scope.
   map and won't appear in the frontend's picker. Adding a new provider
   later is one entry in this file plus a new secret, no frontend changes
   needed (it's discovered automatically via `GET /api/backend/providers`).
-- **`server/apiModelCatalogue.ts`** — per-provider free-model listers,
-  keyed the same way `apiProviders.ts` is. Currently only
-  `openrouter` has one (`listFreeOpenRouterModels`, hitting OpenRouter's
-  public, unauthenticated `GET /api/v1/models` and filtering to
-  `pricing.prompt === "0" && pricing.completion === "0"` plus
-  `supported_parameters` including `"tools"` — a model this engine can't
-  drive tool calls with can't run a turn regardless of price). A provider
-  with no lister here just returns `[]`, which the frontend takes as "no
-  catalogue, fall back to manual entry" rather than an error. Added after
-  a real user typed a bare word ("Llama") into the old free-text-only
-  model-id field and got a `400` from OpenRouter — a raw text field for a
-  provider's exact model slug isn't a workable UI on its own.
+- **`server/apiModelCatalogue.ts`** — per-provider model listers, keyed the
+  same way `apiProviders.ts` is, populating the frontend's model dropdown.
+  A provider with no lister here just returns `[]`, which the frontend
+  takes as "no catalogue, fall back to manual entry" rather than an error.
+  Added after a real user typed a bare word ("Llama") into the old
+  free-text-only model-id field and got a `400` from OpenRouter — a raw
+  text field for a provider's exact model slug isn't a workable UI on its
+  own. Two listers today, both requiring tool-calling support (a model
+  this engine can't drive tool calls with can't run a turn regardless of
+  price), but differing in what else they filter on:
+  - `listFreeOpenRouterModels` — hits OpenRouter's public, unauthenticated
+    `GET /api/v1/models` and additionally filters to
+    `pricing.prompt === "0" && pricing.completion === "0"` plus
+    `supported_parameters` including `"tools"` — this is OpenRouter's real
+    always-free tier, so the frontend labels the dropdown "Free model" for
+    this provider.
+  - `listHuggingFaceModels` — hits HF's Inference Providers router's
+    public, unauthenticated `GET /v1/models` (see
+    [Hub API docs](https://huggingface.co/docs/inference-providers/en/hub-api#list-openai-compatible-models)),
+    which returns each model alongside a `providers[]` array (one entry per
+    backing provider, e.g. Together/Fireworks/Novita) carrying a
+    `supports_tools` flag per provider — filters to models where *any*
+    listed provider has it. Deliberately does **not** filter on the
+    per-provider `is_free` flag the way OpenRouter's lister filters on
+    price: `is_free` marks only a temporary promo, empirically `false` for
+    effectively every model (0 of 119 at the time this was written) — HF
+    billing is usage-based against the configured `HF_API_KEY`'s own
+    credits, not a real free tier, so the frontend labels this provider's
+    dropdown "Suggested model" instead of "Free model."
 - **`frontend/`** — the static web UI that drives `server/`'s API from a
   browser. See `docs/FRONTEND_ARCHITECTURE.md` for its design.
 
@@ -1292,6 +1309,52 @@ tiers 1+ above), no `interact`-triggered damage for freeform attacks with
 no pre-declared technique, and reduced/partial damage on a `"neutral"`
 outcome (an attempt that "doesn't fully land" currently deals either full
 declared damage or none, not a partial amount).
+
+### Phase 1b (built): the relocation primitive
+
+A second concrete gap, found the same way as the damage primitive — via a
+live transcript rather than a design discussion. Goku's player said
+"Instant transmission to venom"; the model correctly called `use_technique`
+with `techniqueId: "instant-transmission"`, and the narration described
+Goku "reappearing directly beside Venom." None of that was true
+mechanically: `use_technique` had no code path that could ever change a
+character's `nodeId` — only the separate `move` action does that, and only
+between graph-adjacent nodes. The next turn ("Punch the venom") failed with
+`"Venom (Eddie Brock)" is not present at "battlefield-core"`, because Goku
+had never actually moved — exposing both the missing mechanic and a false
+narration that had gone unaudited (see Context Efficiency's audit-skip
+optimization below; a clean `"valid"` outcome skipped the full narration
+audit, which is exactly what let an ungrounded relocation claim through).
+
+**What changed:**
+- `TechniqueDefSchema` gained an optional `relocatesToTarget?: boolean` —
+  the same pre-authored, Experience-owned pattern as `effectId`, not
+  something the AI decides per-call. A technique with this flag, when it
+  lands (`outcome: "valid"`) on a named target, moves its user onto the
+  target's current node.
+- `tools/`'s new `applyTechniqueRelocation` resolves the target's current
+  node via `getState` and logs the same `entity.moved` dtm event `move`
+  uses, then runs `applyEnvironmentalEffects` for the new location —
+  identical mechanism to `move`, just reached a different way and without
+  `move`'s graph-adjacency check, since a teleport is defined by not
+  needing an adjacent path. Wired into `applyUseTechnique` alongside the
+  existing `applyTechniqueEffect`, independently — a technique can declare
+  `effectId`, `relocatesToTarget`, both, or neither.
+- `examples/goku-vs-venom`: Goku's `instant-transmission` technique now
+  declares `relocatesToTarget: true`.
+
+Verified directly against the real fixture, replicating the exact failing
+transcript: with Venom at a different node than Goku, a valid
+`instant-transmission` targeting Venom moves Goku onto Venom's node, and a
+subsequent `interact` targeting Venom (the "punch" that previously failed)
+now passes its presence check. A `"neutral"`-outcome attempt confirmed to
+leave position untouched. `npm run typecheck` passes.
+
+**What Phase 1b deliberately doesn't do:** no partial/approximate
+relocation (adjacent-node-only teleports, e.g.), and the audit-skip
+optimization that let the original false narration through was left as-is
+— this fix removes the mismatch it was exposing, rather than tightening
+the optimization itself.
 
 ---
 
