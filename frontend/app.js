@@ -125,6 +125,21 @@ let modelSwitchInFlight = false;
 let pendingLocalRepo = null; // { repoId, filename } set right before a llamaCpp switch is requested
 let autoOpenedModelDialog = false; // reset per connect() - guides a fresh connection straight to model selection
 
+// modelReady mirrors the latest backend status poll; hasTurn tracks
+// whether it's currently the player's own scheduled turn (see
+// docs/BACKEND_ARCHITECTURE.md's Dynamic Timeline-Driven Turn Engine,
+// Phase 2, and connectEventStream's your_turn handler below) - the
+// composer is only ever enabled while both are true, so submitting can't
+// race ahead of an autonomous NPC turn the scheduler hasn't gotten to yet.
+let modelReady = false;
+let hasTurn = false;
+
+function updateComposerEnabled() {
+  const enabled = modelReady && hasTurn;
+  el.input.disabled = !enabled;
+  el.sendBtn.disabled = !enabled;
+}
+
 function describeBackendStatus(status) {
   switch (status.status) {
     case "idle":
@@ -165,8 +180,9 @@ function applyBackendStatus(status) {
   }
 
   const isReady = status.status === "ready";
-  el.input.disabled = !isReady;
-  el.sendBtn.disabled = !isReady;
+  modelReady = isReady;
+  if (!isReady) hasTurn = false; // no scheduled-turn concept while no model is loaded
+  updateComposerEnabled();
   el.modelUnloadBtn.disabled = !isReady;
 
   if (isReady && !wasReady) {
@@ -175,6 +191,7 @@ function applyBackendStatus(status) {
       .catch(() => {});
     addMessage(`Model ready: ${describeBackendStatus(status)}`, "system");
     recordProfileFromStatus(status);
+    connectEventStream();
   }
   wasReady = isReady;
   renderProfiles(status);
@@ -339,27 +356,12 @@ function addReasoningBlock(text, beforeNode) {
 }
 
 /**
- * Streams a turn over Server-Sent Events. Can't use the browser's native
- * EventSource here - it's GET-only with no request body or custom headers,
- * and /api/turn needs POST (a JSON body) plus the X-Api-Key header - so
- * this reads the fetch response's body stream directly and splits it into
- * SSE frames by hand. `handlers` maps event name -> callback(data).
+ * Reads a fetch Response's body as a stream of SSE frames, calling
+ * `handlers[eventName](data)` for each one as it arrives. Shared by
+ * `postSSE` (one stream per submitted turn) and `connectEventStream`
+ * (one long-lived stream for the whole session).
  */
-async function postSSE(path, body, handlers) {
-  const response = await fetch(`${connection.baseUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(connection.apiKey ? { "X-Api-Key": connection.apiKey } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok || !response.body) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error ?? `Request failed (${response.status})`);
-  }
-
+async function readSSE(response, handlers) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -378,6 +380,95 @@ async function postSSE(path, body, handlers) {
       if (!eventMatch || !dataMatch) continue;
       handlers[eventMatch[1]]?.(JSON.parse(dataMatch[1]));
     }
+  }
+}
+
+/**
+ * Streams a turn over Server-Sent Events. Can't use the browser's native
+ * EventSource here - it's GET-only with no request body or custom headers,
+ * and /api/turn needs POST (a JSON body) plus the X-Api-Key header - so
+ * this reads the fetch response's body stream directly (see readSSE).
+ * `handlers` maps event name -> callback(data).
+ */
+async function postSSE(path, body, handlers) {
+  const response = await fetch(`${connection.baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(connection.apiKey ? { "X-Api-Key": connection.apiKey } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error ?? `Request failed (${response.status})`);
+  }
+
+  await readSSE(response, handlers);
+}
+
+// The persistent counterpart to postSSE - opened once at connect time and
+// kept open for the whole session (see docs/BACKEND_ARCHITECTURE.md's
+// Dynamic Timeline-Driven Turn Engine, Phase 2). Carries only things that
+// happen *without* an in-flight request: an autonomous NPC turn's
+// turn_start/tool_call/turn_done, and your_turn signals telling the
+// player their own scheduled turn has come up. The player's own submitted
+// turns keep using postSSE("/api/turn", ...) above, untouched - this is a
+// separate channel, not a replacement for that one.
+let eventStreamController = null;
+
+async function connectEventStream() {
+  if (eventStreamController) return;
+  const controller = new AbortController();
+  eventStreamController = controller;
+
+  // Tracks the UI scaffold (tool log + pending bubble) for whichever
+  // autonomous NPC turn is currently in progress, if any - created on
+  // turn_start, finalized on turn_done, exactly mirroring the composer
+  // submit handler's own toolLog/pending pair below, just triggered by the
+  // stream instead of a local POST.
+  let npcTurn = null;
+
+  try {
+    const response = await fetch(`${connection.baseUrl}/api/events`, {
+      headers: { ...(connection.apiKey ? { "X-Api-Key": connection.apiKey } : {}) },
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) return;
+
+    await readSSE(response, {
+      turn_start: () => {
+        npcTurn = { toolLog: addToolLog(), pending: addPendingMessage() };
+      },
+      tool_call: (call) => {
+        if (npcTurn) appendToolLogEntry(npcTurn.toolLog, call);
+      },
+      turn_done: ({ narration, reasoning, scope }) => {
+        if (!npcTurn) return;
+        const { toolLog, pending } = npcTurn;
+        if (toolLog.list.children.length === 0) toolLog.details.remove();
+        else toolLog.details.open = false;
+        if (reasoning) addReasoningBlock(reasoning, pending);
+        pending.classList.remove("pending");
+        pending.textContent = narration;
+        if (scope) renderScope(scope);
+        el.messages.scrollTop = el.messages.scrollHeight;
+        npcTurn = null;
+      },
+      your_turn: () => {
+        hasTurn = true;
+        updateComposerEnabled();
+        el.input.focus();
+      },
+      error: (data) => {
+        addMessage(`Error: ${data.error ?? "Unknown error"}`, "system");
+      },
+    });
+  } catch {
+    // Connection dropped or aborted - fine for now, no reconnect attempt.
+  } finally {
+    eventStreamController = null;
   }
 }
 
@@ -457,6 +548,11 @@ async function apiFetch(path, options = {}) {
 async function connect() {
   setStatus(null);
   autoOpenedModelDialog = false;
+  // A reconnect (new settings, different base URL) must not leave the
+  // previous connection's persistent event stream running alongside the
+  // new one.
+  eventStreamController?.abort();
+  eventStreamController = null;
   try {
     const health = await apiFetch("/api/health");
     el.experienceName.textContent = health.experience ?? "Genesis Infinity";
@@ -686,8 +782,11 @@ el.composer.addEventListener("submit", async (event) => {
 
   addMessage(input, "player");
   el.input.value = "";
-  el.input.disabled = true;
-  el.sendBtn.disabled = true;
+  // Submitting consumes the player's own scheduled turn - the composer
+  // stays disabled until the scheduler's next your_turn event, not
+  // re-enabled the moment this request finishes (see connectEventStream).
+  hasTurn = false;
+  updateComposerEnabled();
 
   const toolLog = addToolLog();
   const pending = addPendingMessage();
@@ -721,9 +820,11 @@ el.composer.addEventListener("submit", async (event) => {
     settleToolLog();
     pending.remove();
     addMessage(`Error: ${error.message}`, "system");
-  } finally {
-    el.input.disabled = false;
-    el.sendBtn.disabled = false;
+    // The turn never actually resolved - give the player their turn back
+    // so they can retry, rather than leaving the composer disabled until
+    // some future your_turn that this failure never earned.
+    hasTurn = true;
+    updateComposerEnabled();
     el.input.focus();
   }
 });

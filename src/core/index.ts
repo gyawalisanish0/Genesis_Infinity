@@ -41,6 +41,15 @@ export interface Engine {
   currentTimelineUnit(): number;
   /** Sends one user turn through the agentic loop, advancing engine time by one. */
   takeTurn(input: string): Promise<TurnResult>;
+  /**
+   * Runs one NPC's turn autonomously — no player input involved (see
+   * scheduler/, which calls this when an NPC's scheduled turn comes due).
+   * Reuses the exact same aiSession the player's own takeTurn uses, via a
+   * synthetic prompt telling the model whose turn it is — the tool-calling
+   * loop already lets any characterId be named in an action/say call, so
+   * nothing about that pipeline needed to change for this to work.
+   */
+  runNpcTurn(characterId: string): Promise<TurnResult>;
   dispose(): Promise<void>;
 }
 
@@ -111,6 +120,15 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
     async takeTurn(input: string) {
       timestamp += 1;
       return aiSession.prompt(input, timestamp);
+    },
+    async runNpcTurn(characterId: string) {
+      timestamp += 1;
+      const characterName = loaded.characters.find((c) => c.id === characterId)?.name ?? characterId;
+      const prompt =
+        `It is now ${characterName}'s turn to act, with no input from the connected player. ` +
+        `Decide and narrate what ${characterName} does this turn, using the available tools ` +
+        `(action/say/etc.) with characterId "${characterId}".`;
+      return aiSession.prompt(prompt, timestamp);
     },
     async dispose() {
       await aiSession.dispose();

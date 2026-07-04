@@ -1491,63 +1491,97 @@ capability the sheet doesn't show), exactly as it did before, and
   `effectId` damage, a minimum roll fizzles both (no damage) — Instant
   Transmission still relocates deterministically regardless of the roll.
 
-### Phase 2 (deferred): timeline-scheduled turns (initiative)
+### Phase 2 (built): timeline-scheduled turns (initiative)
 
 Every character — player-controlled **and** NPC — gets a scheduled
 next-turn position on the timeline, not just "whoever sends a message
 next":
 
-- After a character acts, **the same roll** (or a roll correlated with it)
-  determines how soon their next turn lands, mapped through an
-  action-type-dependent range: a wide range for a heavier action (e.g. ~30
-  timeline units for `use_technique`/`interact`), a narrow one for a quick
-  action (e.g. ~5 units for `say` — talking is fast). A higher roll means a
-  *sooner* turn (roll inversely maps to the offset — a first-pass formula:
-  `offset = round(range * (21 - roll) / 20)`, tunable like every other
-  constant in this system).
-- The timeline advances continuously; whichever character's scheduled
-  position is soonest goes next. The timeline **halts exactly at that
-  character's turn** — for an NPC this is resolved autonomously (the AI
-  runs their turn via the same tool-calling loop, no player prompt
-  involved); for the player, the same halt applies symmetrically: the
-  timeline simply doesn't advance further until they actually submit
-  input. There is no timeout/auto-pass in this design — Phase 1 doesn't
-  need one, since the whole system is only ever driven by one connected
-  player.
-- Results are pushed to the player filtered to their own character's
-  locality — the same principle `get_scope`'s `othersPresent` already
-  uses (only what's happening at the player's own node), not an omniscient
-  feed of everything happening everywhere.
+- **`scheduler/`** (new module) owns this. A character's next-due position
+  is derived from dtm/'s new `turn.scheduled` events (`Dtm.lastScheduledTurn`,
+  the same "sheet is static, state is derived from the log" pattern
+  position/debuffs already use) — no event yet means due immediately
+  (unit 0). After a character acts, a fresh `rollD20()` (not literally
+  the outcome roll from Phase 1 — see "what this doesn't do" below) maps
+  through one uniform `ACTION_TIMELINE_RANGE` (30 units) into an offset:
+  `offset = max(1, round(range * (21 - roll) / 20))` — higher roll,
+  sooner turn, clamped so a max roll can never produce a zero/negative
+  offset and refire instantly.
+- `armNext()` finds whoever's due-unit is soonest (ties broken
+  player-first, so an Experience's very first turn always opens with the
+  player) and arms exactly one `setTimeout` for that gap
+  (`timeline.unitsToMs`, new on the `Timeline` interface). When it fires:
+  an NPC's turn resolves **autonomously** — `core/`'s new
+  `Engine.runNpcTurn(characterId)` reuses the exact same `aiSession` the
+  player's own `takeTurn` uses, via a synthetic prompt telling the model
+  whose turn it is (nothing about `ai/`'s tool-calling → rules → dice-roll
+  → audit pipeline needed to change — the model could already call
+  `action`/`say` with any character's id). The player's turn is never
+  auto-resolved: the scheduler broadcasts `your_turn` and simply stops,
+  waiting for `onCharacterActed` to be called externally once they submit.
 
-**The real infrastructure gap this exposes:** `timeline/`'s `currentUnit()`
-is deliberately *pull-based* — nothing ever calls it unless some other code
-asks, by design (no background process, nothing to dispose). Autonomous
-NPC turns need the opposite: something has to actively notice "an NPC's
-scheduled time has arrived" and run their turn *without* an inbound HTTP
-request triggering it. This is a genuine, first-of-its-kind addition to
-the engine's execution model — today, absolutely nothing runs unless a
-player's request asked for it.
+**The real infrastructure gap this closed:** `timeline/`'s `currentUnit()`
+is deliberately *pull-based* — nothing calls it unless asked, by design.
+Autonomous NPC turns need the opposite: something has to actively notice
+"an NPC's scheduled time has arrived" and run their turn *without* an
+inbound HTTP request triggering it. `scheduler/`'s `setTimeout`, always
+cleared and re-armed as one (so there's ever only one pending timer for
+the whole session), is the first background process this engine has ever
+had — before this, nothing ever ran unless a request asked for it.
 
-### Persistent event delivery
+**Delivery — a new, separate persistent connection, not a replacement.**
+The design was originally sketched as collapsing everything into one
+channel; built instead as `GET /api/events`, a **second**, long-lived SSE
+connection opened once a model is ready, carrying only things that happen
+*without* an in-flight request (`turn_start`/`tool_call`/`turn_done` for
+an autonomous NPC turn, `your_turn`). The player's own submitted turns
+keep using `POST /api/turn`'s existing per-request SSE stream, completely
+untouched — lower risk than unifying the two, since nothing about the
+already-shipped, tested player-turn path needed to change. Tool-call
+routing during an NPC's autonomous turn uses the exact same
+callback-swapping pattern the player's own turn already used
+(`activeTurnListener`) — a parallel `npcTurnListener` slot, set only while
+`runNpcTurn` is actually running, so a turn's tool calls are never
+duplicated onto both channels or dropped from either.
 
-The per-turn SSE stream just built (one connection per `POST /api/turn`,
-closed when that turn's `done` event fires — see "Reasoning models & live
-tool activity" above) isn't enough on its own: an NPC's autonomous turn can
-happen *between* player messages, with no in-flight request to stream it
-over. This becomes **one persistent connection opened at connect time**,
-carrying every event — player turns, autonomous NPC turns,
-locality-filtered signals — for the whole session, rather than a new
-stream per turn.
+**A real race this exposed, and its fix:** the very first `armNext()`
+fires almost immediately (every character seeded due at unit 0), often
+*before* the frontend has had a chance to open `/api/events` at all — that
+first `your_turn` broadcast would reach zero listeners and be lost
+forever, silently deadlocking the composer. Fixed with
+`Scheduler.isWaitingOnPlayer()`: `GET /api/events`'s handler checks it
+immediately after registering a new client and replays `your_turn` on the
+spot if the scheduler is already waiting on the player, rather than
+relying solely on a broadcast that may have already fired into an empty
+room.
 
-### What's still open for Phase 2 (not yet resolved, blocking implementation)
+Verified end-to-end (mocked model, real fixture, per every prior phase
+this session): submitting the player's turn via `POST /api/turn`
+correctly triggers Venom's autonomous turn moments later, streamed over
+`/api/events` as `turn_start` → `tool_call` → `turn_done`, followed by a
+`your_turn` handing control back to the player — confirmed via a headless-
+Chromium run that the composer is disabled by default, enables on the
+initial `your_turn`, disables again immediately on submit, and re-enables
+once Venom's autonomous turn completes.
 
-- The exact roll-to-offset formula above is a first-pass proposal, not
-  tuned/validated against real play.
+### What this deliberately doesn't do
+
+- **One uniform timeline range for every turn**, not a faster range for
+  `say` the way this section originally sketched. Differentiating
+  requires knowing which tool(s) fired during a turn at the scheduling
+  call site — `ai/`'s `onToolCall` callback is bound once, at session
+  creation, not swappable per-call, so this wasn't cleanly available.
+  Deferred; the constant is tunable like every other one in this system.
+- **The scheduling roll is a fresh, unmodified `rollD20()`**, not literally
+  the same value as Phase 1's outcome roll — most turns (`say`, `move`,
+  non-effect techniques) never compute an outcome roll at all, so there's
+  nothing to share in the general case. Same underlying die, same
+  non-AI-authored philosophy, not a literal shared value.
+- The exact roll-to-offset formula and the 30-unit range are first-pass,
+  not tuned/validated against real play.
 - How multiple simultaneous NPCs (beyond the single Venom in the test
   fixture) interleave on one shared timeline — not yet exercised against
   more than a two-character fixture.
-- Exact shape of the persistent connection's event protocol (event names/
-  payloads beyond reusing `tool_call`/`done` from the per-turn design).
 - Phase 1 doesn't yet distinguish an offensive targeted `interact` (should
   roll and potentially deal damage) from a non-combat one that still names
   a target (e.g. handing a carried item to someone) — any targeted

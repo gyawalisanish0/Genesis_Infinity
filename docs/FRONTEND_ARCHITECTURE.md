@@ -76,6 +76,38 @@ Three event types drive the UI (see `docs/BACKEND_ARCHITECTURE.md`'s
   and the error is shown as a `system` message, same as a failed
   non-streaming request used to look.
 
+## Turn gating & the persistent event stream
+
+Once a model becomes ready, `connectEventStream()` opens a **second**,
+long-lived connection (`GET /api/events`, via the same hand-rolled SSE
+reader `postSSE` uses, factored out into `readSSE`) and keeps it open for
+the rest of the session — see `docs/BACKEND_ARCHITECTURE.md`'s Dynamic
+Timeline-Driven Turn Engine, Phase 2, for why: an NPC's autonomous turn can
+happen *between* player messages, with no in-flight request of the
+frontend's own to carry it.
+
+The composer is gated on two flags, `modelReady` (from the usual status
+poll) and `hasTurn` (whether it's currently the player's own scheduled
+turn) — both must be true for `#input`/`#send-btn` to be enabled
+(`updateComposerEnabled()`). `hasTurn` starts `false` and only flips to
+`true` on a `your_turn` event from the persistent stream; submitting a
+turn immediately flips it back to `false` (a submission consumes the
+player's turn — the composer does **not** re-enable when that request
+finishes, only on the *next* `your_turn`), except on a failed submission,
+which restores `hasTurn` so the player can retry a turn that never
+actually resolved.
+
+Two more event types arrive only on this stream, both scoped to an
+autonomous NPC turn rather than one the player submitted:
+
+- **`turn_start`** — creates the same tool-log + pending-bubble UI
+  scaffold the composer's own submit handler creates locally, since
+  nothing local triggered this turn.
+- **`turn_done`** — carries `{characterId, narration, reasoning, scope}`;
+  finalized exactly like the per-turn stream's own `done` (collapse the
+  tool log, insert a reasoning block if present, replace the pending
+  bubble's dots with the real text, re-render the sidebar from `scope`).
+
 ## Model settings dialog
 
 A separate "Model settings" `<dialog>`, opened from a topbar status

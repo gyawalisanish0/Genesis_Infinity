@@ -1,9 +1,10 @@
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createEngine, type Engine } from "../core/index.js";
 import { loadExperience } from "../data/loaders/experience.js";
 import { getState } from "../state/index.js";
 import { getScope } from "../scope/index.js";
 import type { BackendConfig, ToolCallRecord } from "../ai/index.js";
+import { createScheduler, type Scheduler } from "../scheduler/index.js";
 import { searchGgufModels, listGgufFiles, downloadGgufModel } from "./modelCatalogue.js";
 import { KNOWN_API_PROVIDERS, isKnownApiProvider, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
 import { listApiModels } from "./apiModelCatalogue.js";
@@ -92,6 +93,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
   const experienceName = (await loadExperience(options.experienceDir)).experience.name;
 
   let engine: Engine | null = null;
+  let scheduler: Scheduler | null = null;
   let status: BackendStatus = { status: "idle" };
 
   // Single-session beta (see this function's own doc comment): only one
@@ -101,12 +103,36 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
   // the way through core/'s Engine (onToolCall is bound once, at Engine
   // creation, for the Engine's whole lifetime — see core/index.ts).
   let activeTurnListener: ((call: ToolCallRecord) => void) | null = null;
+  // Same pattern, for an autonomous NPC turn's own tool calls (see
+  // scheduler/) — set only while runNpcTurnBroadcasting below is actually
+  // running one, so a player's own turn's tool calls (already covered by
+  // activeTurnListener above) are never also duplicated onto the
+  // persistent /api/events stream, and vice versa.
+  let npcTurnListener: ((call: ToolCallRecord) => void) | null = null;
+
+  // Clients connected to the persistent GET /api/events stream (see
+  // scheduler/'s own doc comment for why this exists) — a Set rather than
+  // a single slot so a reconnect/second tab is handled for free.
+  const eventClients = new Set<ServerResponse>();
+  function broadcastEvent(event: string, data: unknown): void {
+    const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const client of eventClients) {
+      try {
+        client.write(frame);
+      } catch {
+        eventClients.delete(client);
+      }
+    }
+  }
 
   async function setBackend(backend: BackendConfig, readyStatus: BackendStatus): Promise<void> {
     status = { status: "starting" };
     try {
       const previousEngine = engine;
+      const previousScheduler = scheduler;
       engine = null;
+      scheduler = null;
+      previousScheduler?.dispose();
       if (previousEngine) await previousEngine.dispose();
 
       engine = await createEngine({
@@ -119,11 +145,32 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
             console.log(`[debug] ${call.name}(${JSON.stringify(call.params)}) -> ${JSON.stringify(call.result)}`);
           }
           activeTurnListener?.(call);
+          npcTurnListener?.(call);
         },
       });
+
+      scheduler = createScheduler({
+        dtm: engine.toolCtx.dtm,
+        experienceId: engine.toolCtx.loaded.experience.id,
+        timeline: engine.toolCtx.timeline,
+        characterIds: engine.toolCtx.loaded.characters.map((c) => c.id),
+        playerCharacterId: options.characterId,
+        getScope: currentScope,
+        broadcast: broadcastEvent,
+        runNpcTurn: async (characterId) => {
+          npcTurnListener = (call) => broadcastEvent("tool_call", { characterId, ...call });
+          try {
+            return await engine!.runNpcTurn(characterId);
+          } finally {
+            npcTurnListener = null;
+          }
+        },
+      });
+
       status = readyStatus;
     } catch (error) {
       engine = null;
+      scheduler = null;
       status = { status: "error", message: error instanceof Error ? error.message : String(error) };
     }
   }
@@ -136,8 +183,11 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
    */
   async function unloadEngine(): Promise<void> {
     const previousEngine = engine;
+    const previousScheduler = scheduler;
     engine = null;
+    scheduler = null;
     status = { status: "idle" };
+    previousScheduler?.dispose();
     if (previousEngine) await previousEngine.dispose();
   }
 
@@ -322,6 +372,33 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/api/events") {
+        // Opened once at connect time and kept open for the session (see
+        // scheduler/'s own doc comment) — carries only things that happen
+        // *without* an in-flight request: an autonomous NPC turn's
+        // turn_start/tool_call/turn_done, and your_turn signals. The
+        // player's own submitted turns keep using POST /api/turn's
+        // existing per-request SSE stream below, untouched — this is a
+        // separate channel, not a replacement for that one.
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        res.write(": connected\n\n");
+        eventClients.add(res);
+        // Catches up a client that connects after the scheduler already
+        // broadcast your_turn to nobody — the very first armNext() fires
+        // almost immediately (everyone seeded due "now"), typically before
+        // the frontend has even had a chance to open this connection (see
+        // scheduler/'s own doc comment on isWaitingOnPlayer).
+        if (scheduler?.isWaitingOnPlayer()) {
+          res.write(`event: your_turn\ndata: ${JSON.stringify({ characterId: options.characterId })}\n\n`);
+        }
+        req.on("close", () => eventClients.delete(res));
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/api/turn") {
         if (!engine || status.status !== "ready") {
           res.writeHead(409, { "Content-Type": "application/json" });
@@ -356,6 +433,11 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           const { narration, reasoning } = await engine.takeTurn(input);
           if (options.debug) console.log(`[debug] turn narration: ${JSON.stringify(narration)}`);
           sendEvent("done", { narration, reasoning, scope: currentScope() });
+          // Reports the player's own completed turn to scheduler/ - rolls
+          // their next scheduled position and re-arms whoever's due next
+          // (possibly an NPC, immediately, if their turn was already due
+          // and waiting - see scheduler/'s own doc comment on tie-breaking).
+          scheduler?.onCharacterActed(options.characterId);
         } catch (error) {
           sendEvent("error", { error: error instanceof Error ? error.message : String(error) });
         } finally {
@@ -378,6 +460,11 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
 
   return {
     async close() {
+      for (const client of eventClients) {
+        client.end();
+      }
+      eventClients.clear();
+      scheduler?.dispose();
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
