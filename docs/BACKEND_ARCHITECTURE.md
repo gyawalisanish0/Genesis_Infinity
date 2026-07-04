@@ -1411,6 +1411,135 @@ the optimization itself.
 
 ---
 
+## Dynamic Timeline-Driven Turn Engine
+
+### The concept
+
+Three gaps, all raised together, all pointing at the same root cause:
+
+1. **Freeform `interact` attacks narrate damage with no mechanical
+   consequence.** A live transcript ("Punch and barrages to venom") showed
+   vivid narrated damage — "blistered and smoldering," "staggered" — but
+   nothing in `tools/` can ever touch HP for `interact`; only
+   `use_technique`'s pre-authored `effectId` can (this was called out as
+   deliberately deferred in Phase 1 above).
+2. **Outcome resolution has no chance element.** `rules/`'s tri-state
+   judgment (`valid`/`neutral`/`invalid`) is a single model call with no
+   randomness — it "feels one-sided": the same action against the same
+   state always resolves the same way, with nothing like a miss chance.
+3. **There is no turn order.** The connected player's character can act on
+   every single message with no restriction, and NPCs never get an
+   independent turn of their own — Venom only ever "acts" as flavor
+   narrated *inside* Goku's own turn. Nothing is asking "what does Venom do
+   right now."
+
+All three point toward the same fix: a **D&D-style dice roll that both
+resolves outcomes and schedules turns**, layered onto the existing
+`timeline/` module (today a pure, lazily-computed function of elapsed real
+time, with "no setInterval, no background process, nothing to dispose" —
+see its own doc comment). This section documents the full design; nothing
+below is built yet.
+
+### Dice-based outcome resolution
+
+`rules/`'s tri-state judgment is **kept, not replaced** — it still gates
+plausibility/legality first (wrong location, target not present, a
+capability the sheet doesn't show), exactly as it does today, and
+`"invalid"` stays reserved for that gate alone. What changes is *how*
+`"valid"` vs `"neutral"` gets decided once an action names a target:
+
+- **Roll:** a d20 plus the acting character's relevant skill's `value`
+  (`CharacterSheet.skills[]`, already keyed by `governingAbilityId`) —
+  reusing real sheet data instead of inventing a new stat. *Which* skill
+  applies to a freeform `interact` is itself a categorical judgment
+  `rules/`'s validator makes as part of the same call (the same
+  established pattern as `EffectDefSchema`'s severity: the model picks a
+  category, the engine computes the number from it — never the reverse).
+- **DC:** the target's effective `armorClass` (`computeEffectiveStats`,
+  already computed, already engine-owned, never AI-authored) — a direct,
+  D&D-faithful reuse of a number the engine already tracks for every
+  character, rather than a new invented difficulty scale.
+- **Resolution:** roll ≥ DC → `"valid"`; roll < DC → `"neutral"` (an
+  attempt that doesn't fully land — already exactly `"neutral"`'s existing
+  meaning, so no new outcome state is needed). No target named → the
+  existing judgment-only path, completely unchanged.
+- **`interact` damage magnitude** (closing gap 1): once an `interact`
+  resolves `"valid"` this way, its margin of success (`roll - DC`) buckets
+  into a categorical severity (light/moderate/heavy) exactly like
+  `EffectDefSchema`'s existing severity scale, converted to a damage number
+  via a fixed engine-owned formula — the same `applyEffect` mechanism
+  `use_technique`'s `effectId` and environmental hazards already share, so
+  a freeform attack becomes a third caller of code that already exists,
+  not a new damage pathway. Magnitude is *derived from the roll itself*,
+  never from the model's narration.
+- `move` is unaffected — it stays purely structural (graph-adjacency),
+  never rolled; only `use_technique` and targeted `interact` go through
+  this.
+
+### Timeline-scheduled turns (initiative)
+
+Every character — player-controlled **and** NPC — gets a scheduled
+next-turn position on the timeline, not just "whoever sends a message
+next":
+
+- After a character acts, **the same roll** (or a roll correlated with it)
+  determines how soon their next turn lands, mapped through an
+  action-type-dependent range: a wide range for a heavier action (e.g. ~30
+  timeline units for `use_technique`/`interact`), a narrow one for a quick
+  action (e.g. ~5 units for `say` — talking is fast). A higher roll means a
+  *sooner* turn (roll inversely maps to the offset — a first-pass formula:
+  `offset = round(range * (21 - roll) / 20)`, tunable like every other
+  constant in this system).
+- The timeline advances continuously; whichever character's scheduled
+  position is soonest goes next. The timeline **halts exactly at that
+  character's turn** — for an NPC this is resolved autonomously (the AI
+  runs their turn via the same tool-calling loop, no player prompt
+  involved); for the player, the same halt applies symmetrically: the
+  timeline simply doesn't advance further until they actually submit
+  input. There is no timeout/auto-pass in this design — Phase 1 doesn't
+  need one, since the whole system is only ever driven by one connected
+  player.
+- Results are pushed to the player filtered to their own character's
+  locality — the same principle `get_scope`'s `othersPresent` already
+  uses (only what's happening at the player's own node), not an omniscient
+  feed of everything happening everywhere.
+
+**The real infrastructure gap this exposes:** `timeline/`'s `currentUnit()`
+is deliberately *pull-based* — nothing ever calls it unless some other code
+asks, by design (no background process, nothing to dispose). Autonomous
+NPC turns need the opposite: something has to actively notice "an NPC's
+scheduled time has arrived" and run their turn *without* an inbound HTTP
+request triggering it. This is a genuine, first-of-its-kind addition to
+the engine's execution model — today, absolutely nothing runs unless a
+player's request asked for it.
+
+### Persistent event delivery
+
+The per-turn SSE stream just built (one connection per `POST /api/turn`,
+closed when that turn's `done` event fires — see "Reasoning models & live
+tool activity" above) isn't enough on its own: an NPC's autonomous turn can
+happen *between* player messages, with no in-flight request to stream it
+over. This becomes **one persistent connection opened at connect time**,
+carrying every event — player turns, autonomous NPC turns,
+locality-filtered signals — for the whole session, rather than a new
+stream per turn.
+
+### What's still open (not yet resolved, blocking implementation)
+
+- The exact roll-to-offset formula above is a first-pass proposal, not
+  tuned/validated against real play.
+- Whether every `interact`/`use_technique` gets its own independent roll,
+  or whether one roll serves both outcome and next-turn timing for the
+  same action (current proposal: the same roll serves both, per the
+  discussion that produced this design).
+- How multiple simultaneous NPCs (beyond the single Venom in the test
+  fixture) interleave on one shared timeline — not yet exercised against
+  more than a two-character fixture.
+- Exact shape of the persistent connection's event protocol (event names/
+  payloads beyond reusing `tool_call`/`done` from the per-turn design).
+
+---
+
 ## Platform & Language
 
 - **Language:** TypeScript, for cross-platform deployment (web, desktop,
