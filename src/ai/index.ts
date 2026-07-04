@@ -110,10 +110,16 @@ function difficultyTierToDc(tier: RuleValidation["difficultyTier"], defaultTier:
  * - "combat" — the target's effective armorClass, reusing real
  *   sheet/effectiveStats data. Requires a target with one; returns
  *   undefined otherwise (rules/'s own judgment stands unchanged).
- * - "skill" — difficultyTierToDc's fixed table, no target required at all
- *   (see docs/BACKEND_ARCHITECTURE.md's Dynamic Timeline-Driven Turn
- *   Engine) — a climb, a bluff, or recalling lore has no armor class to
- *   roll against.
+ * - "skill", contested — when rules/ names a `defendingSkillId` that
+ *   actually resolves on a named target's sheet, the DC is dynamic: the
+ *   target's own fresh `rollD20()` plus that skill's value (D&D's opposed
+ *   ability check — Insight vs. Deception, Perception vs. Stealth), not a
+ *   fixed number. Ties favor the attacker, matching the roll >= DC
+ *   convention every other check already uses.
+ * - "skill", uncontested — `difficultyTierToDc`'s fixed table, no target
+ *   required at all (see docs/BACKEND_ARCHITECTURE.md's Dynamic
+ *   Timeline-Driven Turn Engine) — a climb, a bluff at nobody in
+ *   particular, or recalling lore has no one to roll against.
  * Returns undefined — rules/'s own judgment stands unchanged — whenever
  * checkKind is omitted entirely (nothing genuinely at risk); `move` is
  * never rolled, since its Action variant carries no checkKind-worthy
@@ -151,7 +157,15 @@ function resolveRoll(
     }
     dc = targetArmorClass;
   } else {
-    dc = difficultyTierToDc(validation.difficultyTier, ctx.loaded.difficulty.defaultTier);
+    const defender =
+      "targetId" in action && action.targetId
+        ? ctx.loaded.characters.find((c) => c.id === action.targetId)
+        : undefined;
+    const defendingSkillValue = defender?.skills.find((s) => s.id === validation.defendingSkillId)?.value;
+    dc =
+      defendingSkillValue !== undefined
+        ? rollD20() + defendingSkillValue
+        : difficultyTierToDc(validation.difficultyTier, ctx.loaded.difficulty.defaultTier);
   }
 
   const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);

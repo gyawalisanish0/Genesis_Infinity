@@ -60,11 +60,26 @@ export interface RuleValidation {
    * (see checkKind's doc comment for why: the engine, not the model, turns
    * this into an actual number). Mirrors D&D 5e's own DC table:
    * trivial=5, easy=10, medium=15, hard=20, very-hard=25,
-   * near-impossible=30. Only meaningful when `checkKind` is "skill" —
-   * ignored otherwise (a "combat" check's DC is always the target's armor
-   * class).
+   * near-impossible=30. Only meaningful when `checkKind` is "skill" and
+   * `defendingSkillId` isn't set (a contested check has no fixed DC —
+   * see defendingSkillId below); ignored for a "combat" check, whose DC is
+   * always the target's armor class.
    */
   difficultyTier?: "trivial" | "easy" | "medium" | "hard" | "very-hard" | "near-impossible";
+  /**
+   * The target character's own skill id that resists this specific
+   * attempt — e.g. Insight resisting a Deception attempt, Perception
+   * resisting Stealth — naming a genuinely *contested* check (D&D's own
+   * opposed ability check) rather than one vs. a fixed difficulty. Only
+   * meaningful when `checkKind` is "skill" and a target is named: the
+   * engine then rolls the target's own d20 + this skill's value as a
+   * dynamic DC for this attempt, instead of `difficultyTier`'s fixed
+   * table. Omit whenever the target isn't actually resisting with a skill
+   * of their own — an unaware or willing target, or a challenge against
+   * the environment rather than another character — leaving
+   * `difficultyTier` as the DC exactly as before.
+   */
+  defendingSkillId?: string;
 }
 
 const VALIDATION_SCHEMA: JsonSchema = {
@@ -75,6 +90,7 @@ const VALIDATION_SCHEMA: JsonSchema = {
     applicableSkillId: { type: "string" },
     checkKind: { enum: ["combat", "skill"] },
     difficultyTier: { enum: ["trivial", "easy", "medium", "hard", "very-hard", "near-impossible"] },
+    defendingSkillId: { type: "string" },
   },
 };
 
@@ -142,24 +158,36 @@ export class RuleValidator {
         "nothing is genuinely at risk — the engine then never rolls, and " +
         "your own outcome guess stands as-is. Never set checkKind when " +
         'outcome is "invalid".\n' +
-        "When checkKind is \"skill\", also name a difficultyTier — how " +
-        "hard the attempt is, as a category, never a number (D&D 5e's own " +
-        "DC table): trivial (forcing a jammed door within reach), easy " +
-        "(convincing an already-friendly stranger of something plausible), " +
-        "medium (picking a simple lock, swaying a skeptical guard), hard " +
-        "(scaling a sheer wet cliff, deceiving a trained inquisitor), " +
-        "very-hard (disarming a masterwork trap), near-impossible " +
-        "(recalling a secret almost no one alive still knows).\n" +
+        "When checkKind is \"skill\" and a target character is named, " +
+        "first ask whether the target is actually resisting with a skill " +
+        "of their own — persuasion, deception, and stealth against an " +
+        "alert observer are genuinely contested; climbing a cliff or " +
+        "picking a lock with a bystander merely present is not. If it is " +
+        "contested, name defendingSkillId — the target's own skill (by id, " +
+        "from their sheet) that resists this specific attempt: Insight " +
+        "resists Deception, Perception resists Stealth, and so on. The " +
+        "engine then rolls the target's own die against yours instead of " +
+        "a fixed difficulty. If it is NOT contested (no target, or the " +
+        "target isn't the one resisting), name a difficultyTier instead — " +
+        "how hard the attempt is, as a category, never a number (D&D 5e's " +
+        "own DC table): trivial (forcing a jammed door within reach), " +
+        "easy (convincing an already-friendly stranger of something " +
+        "plausible), medium (picking a simple lock, swaying a skeptical " +
+        "guard), hard (scaling a sheer wet cliff, deceiving a trained " +
+        "inquisitor), very-hard (disarming a masterwork trap), " +
+        "near-impossible (recalling a secret almost no one alive still " +
+        "knows). Name at most one of difficultyTier/defendingSkillId, " +
+        "never both.\n" +
         "Whenever checkKind is set (combat or skill), also name which one " +
         "of the acting character's own skills (by id, from their sheet in " +
         "the given state) is most relevant to the attempt — e.g. Athletics " +
         "for a physical strike or climb, Persuasion for a bluff, " +
-        "Acrobatics for a dodge. This and difficultyTier are category " +
-        "choices only, never numbers: the engine rolls dice using the " +
-        "named skill's value against the resulting DC, and that roll — " +
-        "not your outcome guess — is what actually decides valid vs " +
-        "neutral whenever checkKind is set. Omit applicableSkillId " +
-        "entirely if checkKind is omitted.\n" +
+        "Acrobatics for a dodge. applicableSkillId, difficultyTier, and " +
+        "defendingSkillId are all category choices only, never numbers: " +
+        "the engine rolls the actual dice, and that roll — not your " +
+        "outcome guess — is what actually decides valid vs neutral " +
+        "whenever checkKind is set. Omit applicableSkillId entirely if " +
+        "checkKind is omitted.\n" +
         "Respond only with the validation result.",
     );
   }

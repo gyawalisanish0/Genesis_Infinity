@@ -1440,7 +1440,9 @@ time, with "no setInterval, no background process, nothing to dispose" —
 see its own doc comment). Phase 1 (dice-based outcome resolution, closing
 gaps 1 and 2) and Phase 2 (timeline-scheduled turns, closing gap 3) are
 both built; Phase 3 (DC generation for non-combat checks, generalizing
-Phase 1's roll beyond "attack vs. armor class") is also built.
+Phase 1's roll beyond "attack vs. armor class") and Phase 4 (contested
+checks — an opposed roll instead of a fixed DC when a target is actually
+resisting) are also both built.
 
 ### Phase 1 (built): dice-based outcome resolution
 
@@ -1652,11 +1654,61 @@ fallback used when a tier is missing.
   same caveat as Phase 2's roll-to-offset formula. Only which tier the
   no-tier fallback uses is Experience-configurable, not the numbers
   themselves.
-- No contested checks (two characters rolling against each other, e.g.
-  Deception vs. Insight) — `checkKind: "skill"` is always a fixed DC, not
-  an opposed roll against another character's own skill.
 - No advantage/disadvantage or situational roll modifiers beyond the
   named skill's flat value.
+
+### Phase 4 (built): contested checks
+
+Phase 3's `"skill"` checks always rolled against a fixed DC — fine for
+climbing a cliff or picking a lock, wrong for persuading or deceiving
+*another character*, who should get to resist with a skill of their own
+(D&D's own opposed ability check: Insight vs. Deception, Perception vs.
+Stealth). Phase 4 makes that DC dynamic when the target is genuinely
+resisting:
+
+- **`rules/`'s validator now also names `defendingSkillId`** — the
+  target's own skill (by id, from their sheet) that resists this specific
+  attempt — whenever a `"skill"` check's target is actually contesting it
+  with a skill of their own, rather than merely present or an inert
+  environmental challenge. Named instead of `difficultyTier`, never both.
+- **`ai/`'s `resolveRoll` rolls the defender's own fresh `rollD20()`** plus
+  that skill's value as the DC for this one attempt, in place of
+  `difficultyTierToDc`'s fixed table — a genuinely dynamic, two-sided roll
+  rather than a static number. Ties favor the attacker (margin ≥ 0 still
+  wins), the same convention every other roll in this engine already uses.
+- **Graceful fallback, not a hard requirement:** if `defendingSkillId` is
+  omitted, there's no target, or the named skill doesn't actually resolve
+  on the target's sheet, `resolveRoll` falls straight back to
+  `difficultyTierToDc`'s fixed DC exactly as Phase 3 already did — a
+  contested check is something rules/ opts into per-attempt, not
+  something the engine has to force.
+- Unchanged: a contested check is still a `"skill"` check under the hood,
+  so it still never deals damage (only a `"combat"` check's margin is
+  ever forwarded to size damage), and it's still skipped entirely
+  whenever `checkKind` itself is omitted.
+
+Verified against the real fixture (mocked model, forced roll sequences):
+an attacker who clearly outrolls the defender's contested check succeeds;
+a defender who clearly outrolls the attacker wins the contest (`neutral`);
+an exact tie favors the attacker; and a `defendingSkillId` naming a skill
+neither character actually has falls back to the fixed difficulty-tier DC
+with only the attacker's own single roll consumed (confirming the
+defender's roll never happens in the fallback path).
+
+### What Phase 4 deliberately doesn't do
+
+- No advantage/disadvantage on either side of a contested roll — same gap
+  as Phase 3's own list, now also true for the defender's roll.
+- The defender always rolls fresh — no "passive" (10 + skill, no roll)
+  option the way D&D itself sometimes uses for background contests like
+  Stealth vs. passive Perception. Every roll in this engine is dynamic by
+  design; this was a deliberate choice, not an oversight (see the
+  Phase 4 design discussion), but it does mean a contested check is
+  never fully deterministic even for repeated, low-stakes attempts.
+- A contested check's own margin/outcome isn't surfaced anywhere the
+  narration model can see *why* it lost or won beyond the tool result's
+  `outcome` field — no breakdown of "you rolled X, they rolled Y" is
+  exposed today.
 
 ---
 
