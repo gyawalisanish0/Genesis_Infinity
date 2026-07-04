@@ -1,4 +1,4 @@
-import type { Action, ActionResult, RejectionResult, ToolContext } from "../tools/index.js";
+import type { Action, ActionOutcome, ActionResult, RejectionResult, ToolContext } from "../tools/index.js";
 import {
   getScopeTool,
   getCharacterSheetTool,
@@ -65,6 +65,56 @@ function scopeStateToAction(state: StateSnapshot, action: Action): StateSnapshot
     ...state,
     characters: state.characters.filter((c) => relevantIds.has(c.sheet.id)),
   };
+}
+
+function rollD20(): number {
+  return 1 + Math.floor(Math.random() * 20);
+}
+
+/**
+ * Overrides rules/'s own valid/neutral guess with a real dice roll once a
+ * target is named and legal (rules/'s "invalid" gate already ran and
+ * passed) — d20 plus the acting character's applicableSkillId value
+ * (rules/'s own categorical judgment) against the target's effective
+ * armorClass as DC, reusing real sheet/effectiveStats data instead of a
+ * new invented difficulty scale (see docs/BACKEND_ARCHITECTURE.md's
+ * Dynamic Timeline-Driven Turn Engine). Returns undefined — rules/'s own
+ * judgment stands unchanged — when there's no target or the target has no
+ * armorClass to roll against; `move` is never rolled, since its Action
+ * variant has no targetId at all. Also skipped for a `use_technique` whose
+ * TechniqueDef has no `effectId` (e.g. Instant Transmission, a pure
+ * `relocatesToTarget` teleport with nothing to resist) — an "attack roll
+ * vs armor class" only makes sense for a technique that actually has a
+ * mechanical effect to land.
+ */
+function resolveRoll(
+  ctx: ToolContext,
+  state: StateSnapshot,
+  action: Action,
+  applicableSkillId: string | undefined,
+): { outcome: ActionOutcome; margin: number } | undefined {
+  if (!("targetId" in action) || !action.targetId) {
+    return undefined;
+  }
+
+  if (action.type === "use_technique") {
+    const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
+    const technique = actorSheet?.techniques.find((t) => t.id === action.techniqueId);
+    if (!technique?.effectId) {
+      return undefined;
+    }
+  }
+
+  const targetArmorClass = state.characters.find((c) => c.sheet.id === action.targetId)?.effectiveStats.armorClass;
+  if (targetArmorClass === undefined) {
+    return undefined;
+  }
+
+  const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
+  const skillValue = actorSheet?.skills.find((s) => s.id === applicableSkillId)?.value ?? 0;
+
+  const margin = rollD20() + skillValue - targetArmorClass;
+  return { outcome: margin >= 0 ? "valid" : "neutral", margin };
 }
 
 function describeAction(action: Action): string {
@@ -432,7 +482,13 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           return record("action", params, result);
         }
 
-        return record("action", params, applyAction(options.toolCtx, action, validation.outcome));
+        const rolled = resolveRoll(options.toolCtx, state, action, validation.applicableSkillId);
+
+        return record(
+          "action",
+          params,
+          applyAction(options.toolCtx, action, rolled?.outcome ?? validation.outcome, rolled?.margin),
+        );
       },
     },
   ];

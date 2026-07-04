@@ -1437,46 +1437,61 @@ All three point toward the same fix: a **D&D-style dice roll that both
 resolves outcomes and schedules turns**, layered onto the existing
 `timeline/` module (today a pure, lazily-computed function of elapsed real
 time, with "no setInterval, no background process, nothing to dispose" —
-see its own doc comment). This section documents the full design; nothing
-below is built yet.
+see its own doc comment). Phase 1 (dice-based outcome resolution, closing
+gaps 1 and 2) is built; Phase 2 (timeline-scheduled turns, closing gap 3)
+remains a documented design, not yet built.
 
-### Dice-based outcome resolution
+### Phase 1 (built): dice-based outcome resolution
 
 `rules/`'s tri-state judgment is **kept, not replaced** — it still gates
 plausibility/legality first (wrong location, target not present, a
-capability the sheet doesn't show), exactly as it does today, and
+capability the sheet doesn't show), exactly as it did before, and
 `"invalid"` stays reserved for that gate alone. What changes is *how*
 `"valid"` vs `"neutral"` gets decided once an action names a target:
 
-- **Roll:** a d20 plus the acting character's relevant skill's `value`
-  (`CharacterSheet.skills[]`, already keyed by `governingAbilityId`) —
-  reusing real sheet data instead of inventing a new stat. *Which* skill
-  applies to a freeform `interact` is itself a categorical judgment
-  `rules/`'s validator makes as part of the same call (the same
-  established pattern as `EffectDefSchema`'s severity: the model picks a
-  category, the engine computes the number from it — never the reverse).
+- **Roll:** a d20 (`ai/`'s `rollD20`) plus the acting character's relevant
+  skill's `value` (`CharacterSheet.skills[]`, already keyed by
+  `governingAbilityId`) — reusing real sheet data instead of inventing a
+  new stat. *Which* skill applies is itself a categorical judgment
+  `rules/`'s validator now also makes as part of its existing call
+  (`RuleValidation.applicableSkillId`) — the same established pattern as
+  `EffectDefSchema`'s severity: the model picks a category, the engine
+  computes the number from it, never the reverse.
 - **DC:** the target's effective `armorClass` (`computeEffectiveStats`,
   already computed, already engine-owned, never AI-authored) — a direct,
   D&D-faithful reuse of a number the engine already tracks for every
-  character, rather than a new invented difficulty scale.
+  character, rather than a new invented difficulty scale. No target named,
+  or the target has no `armorClass` at all → `ai/`'s `resolveRoll` returns
+  `undefined` and `rules/`'s own valid/neutral guess is used as-is,
+  completely unchanged from before.
 - **Resolution:** roll ≥ DC → `"valid"`; roll < DC → `"neutral"` (an
   attempt that doesn't fully land — already exactly `"neutral"`'s existing
-  meaning, so no new outcome state is needed). No target named → the
-  existing judgment-only path, completely unchanged.
+  meaning, so no new outcome state was needed).
 - **`interact` damage magnitude** (closing gap 1): once an `interact`
-  resolves `"valid"` this way, its margin of success (`roll - DC`) buckets
-  into a categorical severity (light/moderate/heavy) exactly like
-  `EffectDefSchema`'s existing severity scale, converted to a damage number
-  via a fixed engine-owned formula — the same `applyEffect` mechanism
-  `use_technique`'s `effectId` and environmental hazards already share, so
-  a freeform attack becomes a third caller of code that already exists,
-  not a new damage pathway. Magnitude is *derived from the roll itself*,
-  never from the model's narration.
+  resolves `"valid"` this way, its margin of success (`roll - DC`, via
+  `tools/`'s `marginToSeverity`) buckets into the same 1-5 severity scale
+  `EffectDefSchema` already uses, converted to a damage number via a fixed
+  engine-owned constant (`DAMAGE_PER_SEVERITY`, roughly matched to the
+  existing authored effect pool's own severity/damage ratio) — a synthetic
+  `EffectDef` (`tools/`'s `applyRolledDamage`) run through the same
+  `applyEffect` mechanism `use_technique`'s `effectId` and environmental
+  hazards already share, so a freeform attack became a third caller of
+  code that already existed, not a new damage pathway. Magnitude is
+  *derived from the roll itself*, never from the model's narration.
 - `move` is unaffected — it stays purely structural (graph-adjacency),
-  never rolled; only `use_technique` and targeted `interact` go through
-  this.
+  never rolled, since its `Action` variant has no `targetId` at all. A
+  `use_technique` whose `TechniqueDef` has no `effectId` (e.g. Instant
+  Transmission, a pure `relocatesToTarget` teleport with nothing to
+  resist) is also skipped — an "attack roll vs armor class" only makes
+  sense for a technique that actually has a mechanical effect to land;
+  gating it universally would have made a bad roll block a *teleport*,
+  regressing Phase 1b's relocation primitive for no reason. Verified
+  directly: a maxed roll against Venom's armor class both lands a freeform
+  `interact` punch (damage applied) and lands a Kamehameha's own
+  `effectId` damage, a minimum roll fizzles both (no damage) — Instant
+  Transmission still relocates deterministically regardless of the roll.
 
-### Timeline-scheduled turns (initiative)
+### Phase 2 (deferred): timeline-scheduled turns (initiative)
 
 Every character — player-controlled **and** NPC — gets a scheduled
 next-turn position on the timeline, not just "whoever sends a message
@@ -1524,19 +1539,22 @@ carrying every event — player turns, autonomous NPC turns,
 locality-filtered signals — for the whole session, rather than a new
 stream per turn.
 
-### What's still open (not yet resolved, blocking implementation)
+### What's still open for Phase 2 (not yet resolved, blocking implementation)
 
 - The exact roll-to-offset formula above is a first-pass proposal, not
   tuned/validated against real play.
-- Whether every `interact`/`use_technique` gets its own independent roll,
-  or whether one roll serves both outcome and next-turn timing for the
-  same action (current proposal: the same roll serves both, per the
-  discussion that produced this design).
 - How multiple simultaneous NPCs (beyond the single Venom in the test
   fixture) interleave on one shared timeline — not yet exercised against
   more than a two-character fixture.
 - Exact shape of the persistent connection's event protocol (event names/
   payloads beyond reusing `tool_call`/`done` from the per-turn design).
+- Phase 1 doesn't yet distinguish an offensive targeted `interact` (should
+  roll and potentially deal damage) from a non-combat one that still names
+  a target (e.g. handing a carried item to someone) — any targeted
+  `interact` against a character with an `armorClass` is treated as
+  attack-like today. A future pass could have `rules/` classify offensive
+  intent explicitly rather than inferring it from "has a target with an
+  armor class."
 
 ---
 

@@ -16,9 +16,27 @@ export interface RuleValidation {
    *   reduced effect. Distinct from "invalid": this is not a rejection.
    * "invalid" — the action is illegal or impossible given current state
    *   and does not happen at all.
+   *
+   * When a target is named and legal (not "invalid"), the engine
+   * overrides this valid/neutral guess with a real dice roll instead of
+   * trusting it directly — see ai/index.ts's resolveRoll and
+   * docs/BACKEND_ARCHITECTURE.md's Dynamic Timeline-Driven Turn Engine.
+   * `outcome` still matters even then: the roll only ever runs once this
+   * has already ruled out "invalid," and it's used as-is whenever no
+   * target/DC is available to roll against.
    */
   outcome: "valid" | "neutral" | "invalid";
   reason: string;
+  /**
+   * The acting character's skill id (from their own sheet, given in the
+   * prompted state) most relevant to a targeted action — e.g. Athletics
+   * for a punch, Acrobatics for a dodge. Only meaningful when a target is
+   * named; the engine uses it to pick which skill's value becomes the
+   * roll's modifier. Never a magnitude or number itself — the same
+   * "AI picks a category, the engine computes the number" pattern
+   * EffectDefSchema's severity already uses elsewhere.
+   */
+  applicableSkillId?: string;
 }
 
 const VALIDATION_SCHEMA: JsonSchema = {
@@ -26,6 +44,7 @@ const VALIDATION_SCHEMA: JsonSchema = {
   properties: {
     outcome: { enum: ["valid", "neutral", "invalid"] },
     reason: { type: "string" },
+    applicableSkillId: { type: "string" },
   },
 };
 
@@ -77,6 +96,16 @@ export class RuleValidator {
         "the distance: neutral — they try, but it doesn't connect.\n" +
         "- Acting from a node the character isn't at, or targeting a " +
         "character who isn't present: invalid.\n" +
+        "\n" +
+        "If the action names a target and isn't invalid, also name which " +
+        "one of the acting character's own skills (by id, from their " +
+        "sheet in the given state) is most relevant to the attempt — e.g. " +
+        "Athletics for a physical strike, Acrobatics for a dodge or " +
+        "maneuver. This is a category choice only, never a number: the " +
+        "engine rolls dice using that skill's value itself, and that roll " +
+        "— not your outcome guess — is what actually decides valid vs " +
+        "neutral for a targeted action. Omit this field entirely if no " +
+        "target is named.\n" +
         "Respond only with the validation result.",
     );
   }

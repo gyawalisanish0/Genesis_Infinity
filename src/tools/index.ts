@@ -510,10 +510,66 @@ function applyItemUse(
   });
 }
 
+/**
+ * Damage-per-severity for a freeform interact attack resolved by dice roll
+ * (see ai/index.ts's resolveRoll) — a first-pass, tunable constant, not
+ * validated against real play (see docs/BACKEND_ARCHITECTURE.md's Dynamic
+ * Timeline-Driven Turn Engine). Roughly matches the existing authored
+ * effect pool's own severity/damage ratio (venom-bite: severity 2, 8
+ * damage; kamehameha-blast: severity 4, 15 damage).
+ */
+const DAMAGE_PER_SEVERITY = 4;
+
+/**
+ * Buckets a roll's margin of success (roll - target DC) into the same 1-5
+ * severity scale EffectDefSchema already uses — never a raw number chosen
+ * by the model, only a category derived from the roll itself.
+ */
+function marginToSeverity(margin: number): number {
+  if (margin >= 20) return 5;
+  if (margin >= 15) return 4;
+  if (margin >= 10) return 3;
+  if (margin >= 5) return 2;
+  return 1;
+}
+
+/**
+ * Closes the gap where only use_technique's pre-authored effectId could
+ * ever deal damage: once a freeform interact attack resolves "valid" via
+ * a dice roll (see ai/index.ts's resolveRoll), synthesizes an EffectDef-
+ * shaped damage effect from the roll's margin and applies it through the
+ * same applyEffect mechanism use_technique and hazards already share —
+ * a third caller of existing code, not a new damage pathway. Magnitude
+ * is derived entirely from the roll; nothing here is AI-authored.
+ */
+function applyRolledDamage(
+  ctx: ToolContext,
+  targetCharacterId: string,
+  margin: number,
+  turnTimestamp: number,
+  sourceCharacterId: string,
+): void {
+  const severity = marginToSeverity(margin);
+  applyEffect(
+    ctx,
+    {
+      id: "rolled-hit",
+      name: "Rolled hit",
+      description: "Damage from a freeform attack's dice-roll margin.",
+      severity,
+      currentHitPointsDelta: -(severity * DAMAGE_PER_SEVERITY),
+    },
+    targetCharacterId,
+    turnTimestamp,
+    { characterId: sourceCharacterId },
+  );
+}
+
 function applyInteract(
   ctx: ToolContext,
   action: Extract<Action, { type: "interact" }>,
   outcome: ActionOutcome,
+  rollMargin?: number,
 ): ActionResult {
   ctx.dtm.append({
     experienceId: ctx.loaded.experience.id,
@@ -524,6 +580,9 @@ function applyInteract(
   });
   if (action.itemId) {
     applyItemUse(ctx, action.characterId, action.itemId, action.timestamp);
+  }
+  if (outcome === "valid" && action.targetId && rollMargin !== undefined) {
+    applyRolledDamage(ctx, action.targetId, rollMargin, action.timestamp, action.characterId);
   }
   return { success: true, outcome };
 }
@@ -621,12 +680,17 @@ export function checkAction(ctx: ToolContext, action: Action): ActionCheck {
 /**
  * Applies an action that has already passed checkAction and rules/
  * validation — writes the resulting dtm event. `outcome` distinguishes a
- * full success ("valid") from a fizzle ("neutral") per rules/'s judgment.
+ * full success ("valid") from a fizzle ("neutral") per rules/'s judgment
+ * (see ai/index.ts's resolveRoll for how a targeted action's outcome is
+ * itself now dice-derived). `rollMargin` (roll - target DC) is only ever
+ * used by `interact`, to size a freeform attack's damage — move and
+ * use_technique ignore it entirely.
  */
 export function applyAction(
   ctx: ToolContext,
   action: Action,
   outcome: ActionOutcome,
+  rollMargin?: number,
 ): ActionResult {
   switch (action.type) {
     case "move":
@@ -634,6 +698,6 @@ export function applyAction(
     case "use_technique":
       return applyUseTechnique(ctx, action, outcome);
     case "interact":
-      return applyInteract(ctx, action, outcome);
+      return applyInteract(ctx, action, outcome, rollMargin);
   }
 }
