@@ -426,6 +426,96 @@ engine detects available RAM against cumulative model footprint and picks SAL
 or MML accordingly; an engine constant can force one strategy regardless of
 detected capability.
 
+### Per-Character Narrative Sessions (built)
+
+Orthogonal to the tier system above (which splits *jobs* — narrative vs.
+rules vs. summarization — across models): within the narrative job
+itself, every character used to share **one** narrative session. An
+NPC's autonomous turn (`core/`'s `Engine.runNpcTurn`) reused the same
+session as the player's own turns via a synthetic "it's now Venom's
+turn" prompt — no character had continuity of its own beyond what
+`dtm/`'s event log could re-derive each time.
+
+Each character now gets its own persistent narrative session, with a
+different cost profile per backend:
+
+- **API backend** (`apiDriver.ts`) — free. A `ChatDriverSession` here is
+  just an in-memory message array over stateless HTTP calls;
+  `createNarrativeSession` is identical to `createChatSession`, and
+  `ai/`'s per-character pool (below) is given `maxResidentNarrativeSessions:
+  Infinity` — nothing is ever evicted.
+- **Local llama.cpp backend** (`llamaCppDriver.ts`) — bounded. Each
+  `LlamaContextSequence` is a real, memory-backed KV cache; the driver
+  now reserves `3 + narrativeWorkerSequences` sequences instead of a flat
+  4 — 3 permanent (rules validator, narration auditor, summarizer, handed
+  out via the unchanged `createChatSession`, never released) plus a
+  `narrativeWorkerSequences`-sized pool (`LlamaCppBackendConfig`,
+  default `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2`) reused across
+  characters via the new `createNarrativeSession`. Since each sequence
+  gets its own full `contextSize`-sized KV cache (not divided), the
+  default raises the backend's reserved memory by ~25% (5 sequences
+  instead of 4).
+
+**The eviction policy lives in `ai/index.ts`, not either driver** — the
+drivers only expose two mechanical primitives: `createNarrativeSession`
+and `ChatDriverSession.release?()` (returns a session's sequence to the
+free list; a no-op on the API backend, which has nothing scarce). A
+`Map<characterId, CharacterSessionState>` tracks whoever's currently
+resident (each with their own session and their own
+`pendingNarrations`/`subblockSummaries`/`blockSummaries` rollup state —
+see Context Efficiency below), bounded to
+`AiSessionOptions.maxResidentNarrativeSessions`. When a character not
+currently resident needs a turn and the pool is full, the
+least-recently-used resident character is evicted:
+1. If it has any unflushed `pendingNarrations`, force one extra
+   `summarizer.summarize(...)` pass immediately (the same call already
+   used for the periodic rollup, just triggered early) so its cold
+   recap is always fully compacted.
+2. `session.compactContext(finalRecap)` collapses its driver-level
+   history down to just that recap (reusing the exact mechanism the
+   periodic rollup already uses).
+3. `session.release?.()` frees its sequence (local backend only), and
+   the recap is stashed in a `coldRecaps` map, keyed by character.
+
+When that character's turn comes around again, a fresh session is
+created via `createNarrativeSession` and immediately seeded with its
+`coldRecaps` entry (if any) via the same `compactContext` call, before
+its real prompt that turn — **this is the concrete cap on reload cost**:
+resuming an evicted character never costs more than "system prompt plus
+one short recap string," regardless of how many turns it sat evicted,
+never the full accumulated history a naive swap would otherwise have to
+replay through the model to rebuild its KV cache.
+
+The already-resident case is checked first, unconditionally, before any
+eviction logic runs — without that explicit fast path, a pool at (or
+above) capacity would evict and reconstruct the *same* character's own
+session every single turn instead of just reusing it. This works
+because turns are already fully serialized end-to-end
+(`scheduler/`'s `armNext()` never re-arms until the current turn's
+`onCharacterActed` fires) — there is never more than one turn in flight,
+so this is a cache-eviction problem, not a concurrent-request-queueing
+one.
+
+**Behavior change worth calling out explicitly**: each character's own
+subblock/block rollup cadence is now based on *that character's own*
+turn count, not a shared global one — a rarely-acting NPC will go many
+real-world turns before its own history is ever compacted. This is the
+intended consequence of giving each character real continuity, not a
+bug.
+
+**What this deliberately doesn't do:** the local backend's sequence
+reuse (`sequence.clearHistory()` + a fresh `LlamaChatSession` wrapper,
+verified against node-llama-cpp's actual implementation — there's no API
+to rebind an existing session to a new conversation in place) couldn't
+be exercised against a real model in this environment; verified via a
+fake driver standing in for the eviction *policy* logic instead (LRU
+selection, forced-flush-on-evict, cold-recap reseed, and the
+same-character-never-evicts-itself fast path), not the driver's own
+KV-cache mechanics. The eviction/reload cost itself also isn't tuned
+against real play — `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2` is a
+first-pass default, same caveat as every other constant introduced this
+way.
+
 ---
 
 ## Beta Implementation
@@ -1408,6 +1498,307 @@ relocation (adjacent-node-only teleports, e.g.), and the audit-skip
 optimization that let the original false narration through was left as-is
 — this fix removes the mismatch it was exposing, rather than tightening
 the optimization itself.
+
+---
+
+## Dynamic Timeline-Driven Turn Engine
+
+### The concept
+
+Three gaps, all raised together, all pointing at the same root cause:
+
+1. **Freeform `interact` attacks narrate damage with no mechanical
+   consequence.** A live transcript ("Punch and barrages to venom") showed
+   vivid narrated damage — "blistered and smoldering," "staggered" — but
+   nothing in `tools/` can ever touch HP for `interact`; only
+   `use_technique`'s pre-authored `effectId` can (this was called out as
+   deliberately deferred in Phase 1 above).
+2. **Outcome resolution has no chance element.** `rules/`'s tri-state
+   judgment (`valid`/`neutral`/`invalid`) is a single model call with no
+   randomness — it "feels one-sided": the same action against the same
+   state always resolves the same way, with nothing like a miss chance.
+3. **There is no turn order.** The connected player's character can act on
+   every single message with no restriction, and NPCs never get an
+   independent turn of their own — Venom only ever "acts" as flavor
+   narrated *inside* Goku's own turn. Nothing is asking "what does Venom do
+   right now."
+
+All three point toward the same fix: a **D&D-style dice roll that both
+resolves outcomes and schedules turns**, layered onto the existing
+`timeline/` module (today a pure, lazily-computed function of elapsed real
+time, with "no setInterval, no background process, nothing to dispose" —
+see its own doc comment). Phase 1 (dice-based outcome resolution, closing
+gaps 1 and 2) and Phase 2 (timeline-scheduled turns, closing gap 3) are
+both built; Phase 3 (DC generation for non-combat checks, generalizing
+Phase 1's roll beyond "attack vs. armor class") and Phase 4 (contested
+checks — an opposed roll instead of a fixed DC when a target is actually
+resisting) are also both built.
+
+### Phase 1 (built): dice-based outcome resolution
+
+`rules/`'s tri-state judgment is **kept, not replaced** — it still gates
+plausibility/legality first (wrong location, target not present, a
+capability the sheet doesn't show), exactly as it did before, and
+`"invalid"` stays reserved for that gate alone. What changes is *how*
+`"valid"` vs `"neutral"` gets decided once an action names a target:
+
+- **Roll:** a d20 (`ai/`'s `rollD20`) plus the acting character's relevant
+  skill's `value` (`CharacterSheet.skills[]`, already keyed by
+  `governingAbilityId`) — reusing real sheet data instead of inventing a
+  new stat. *Which* skill applies is itself a categorical judgment
+  `rules/`'s validator now also makes as part of its existing call
+  (`RuleValidation.applicableSkillId`) — the same established pattern as
+  `EffectDefSchema`'s severity: the model picks a category, the engine
+  computes the number from it, never the reverse.
+- **DC:** the target's effective `armorClass` (`computeEffectiveStats`,
+  already computed, already engine-owned, never AI-authored) — a direct,
+  D&D-faithful reuse of a number the engine already tracks for every
+  character, rather than a new invented difficulty scale. No target named,
+  or the target has no `armorClass` at all → `ai/`'s `resolveRoll` returns
+  `undefined` and `rules/`'s own valid/neutral guess is used as-is,
+  completely unchanged from before.
+- **Resolution:** roll ≥ DC → `"valid"`; roll < DC → `"neutral"` (an
+  attempt that doesn't fully land — already exactly `"neutral"`'s existing
+  meaning, so no new outcome state was needed).
+- **`interact` damage magnitude** (closing gap 1): once an `interact`
+  resolves `"valid"` this way, its margin of success (`roll - DC`, via
+  `tools/`'s `marginToSeverity`) buckets into the same 1-5 severity scale
+  `EffectDefSchema` already uses, converted to a damage number via a fixed
+  engine-owned constant (`DAMAGE_PER_SEVERITY`, roughly matched to the
+  existing authored effect pool's own severity/damage ratio) — a synthetic
+  `EffectDef` (`tools/`'s `applyRolledDamage`) run through the same
+  `applyEffect` mechanism `use_technique`'s `effectId` and environmental
+  hazards already share, so a freeform attack became a third caller of
+  code that already existed, not a new damage pathway. Magnitude is
+  *derived from the roll itself*, never from the model's narration.
+- `move` is unaffected — it stays purely structural (graph-adjacency),
+  never rolled, since its `Action` variant has no `targetId` at all. A
+  `use_technique` whose `TechniqueDef` has no `effectId` (e.g. Instant
+  Transmission, a pure `relocatesToTarget` teleport with nothing to
+  resist) is also skipped — an "attack roll vs armor class" only makes
+  sense for a technique that actually has a mechanical effect to land;
+  gating it universally would have made a bad roll block a *teleport*,
+  regressing Phase 1b's relocation primitive for no reason. Verified
+  directly: a maxed roll against Venom's armor class both lands a freeform
+  `interact` punch (damage applied) and lands a Kamehameha's own
+  `effectId` damage, a minimum roll fizzles both (no damage) — Instant
+  Transmission still relocates deterministically regardless of the roll.
+
+### Phase 2 (built): timeline-scheduled turns (initiative)
+
+Every character — player-controlled **and** NPC — gets a scheduled
+next-turn position on the timeline, not just "whoever sends a message
+next":
+
+- **`scheduler/`** (new module) owns this. A character's next-due position
+  is derived from dtm/'s new `turn.scheduled` events (`Dtm.lastScheduledTurn`,
+  the same "sheet is static, state is derived from the log" pattern
+  position/debuffs already use) — no event yet means due immediately
+  (unit 0). After a character acts, a fresh `rollD20()` (not literally
+  the outcome roll from Phase 1 — see "what this doesn't do" below) maps
+  through one uniform `ACTION_TIMELINE_RANGE` (30 units) into an offset:
+  `offset = max(1, round(range * (21 - roll) / 20))` — higher roll,
+  sooner turn, clamped so a max roll can never produce a zero/negative
+  offset and refire instantly.
+- `armNext()` finds whoever's due-unit is soonest (ties broken
+  player-first, so an Experience's very first turn always opens with the
+  player) and arms exactly one `setTimeout` for that gap
+  (`timeline.unitsToMs`, new on the `Timeline` interface). When it fires:
+  an NPC's turn resolves **autonomously** — `core/`'s new
+  `Engine.runNpcTurn(characterId)` reuses the exact same `aiSession` the
+  player's own `takeTurn` uses, via a synthetic prompt telling the model
+  whose turn it is (nothing about `ai/`'s tool-calling → rules → dice-roll
+  → audit pipeline needed to change — the model could already call
+  `action`/`say` with any character's id). The player's turn is never
+  auto-resolved: the scheduler broadcasts `your_turn` and simply stops,
+  waiting for `onCharacterActed` to be called externally once they submit.
+
+**The real infrastructure gap this closed:** `timeline/`'s `currentUnit()`
+is deliberately *pull-based* — nothing calls it unless asked, by design.
+Autonomous NPC turns need the opposite: something has to actively notice
+"an NPC's scheduled time has arrived" and run their turn *without* an
+inbound HTTP request triggering it. `scheduler/`'s `setTimeout`, always
+cleared and re-armed as one (so there's ever only one pending timer for
+the whole session), is the first background process this engine has ever
+had — before this, nothing ever ran unless a request asked for it.
+
+**Delivery — a new, separate persistent connection, not a replacement.**
+The design was originally sketched as collapsing everything into one
+channel; built instead as `GET /api/events`, a **second**, long-lived SSE
+connection opened once a model is ready, carrying only things that happen
+*without* an in-flight request (`turn_start`/`tool_call`/`turn_done` for
+an autonomous NPC turn, `your_turn`). The player's own submitted turns
+keep using `POST /api/turn`'s existing per-request SSE stream, completely
+untouched — lower risk than unifying the two, since nothing about the
+already-shipped, tested player-turn path needed to change. Tool-call
+routing during an NPC's autonomous turn uses the exact same
+callback-swapping pattern the player's own turn already used
+(`activeTurnListener`) — a parallel `npcTurnListener` slot, set only while
+`runNpcTurn` is actually running, so a turn's tool calls are never
+duplicated onto both channels or dropped from either.
+
+**A real race this exposed, and its fix:** the very first `armNext()`
+fires almost immediately (every character seeded due at unit 0), often
+*before* the frontend has had a chance to open `/api/events` at all — that
+first `your_turn` broadcast would reach zero listeners and be lost
+forever, silently deadlocking the composer. Fixed with
+`Scheduler.isWaitingOnPlayer()`: `GET /api/events`'s handler checks it
+immediately after registering a new client and replays `your_turn` on the
+spot if the scheduler is already waiting on the player, rather than
+relying solely on a broadcast that may have already fired into an empty
+room.
+
+Verified end-to-end (mocked model, real fixture, per every prior phase
+this session): submitting the player's turn via `POST /api/turn`
+correctly triggers Venom's autonomous turn moments later, streamed over
+`/api/events` as `turn_start` → `tool_call` → `turn_done`, followed by a
+`your_turn` handing control back to the player — confirmed via a headless-
+Chromium run that the composer is disabled by default, enables on the
+initial `your_turn`, disables again immediately on submit, and re-enables
+once Venom's autonomous turn completes.
+
+### What this deliberately doesn't do
+
+- **One uniform timeline range for every turn**, not a faster range for
+  `say` the way this section originally sketched. Differentiating
+  requires knowing which tool(s) fired during a turn at the scheduling
+  call site — `ai/`'s `onToolCall` callback is bound once, at session
+  creation, not swappable per-call, so this wasn't cleanly available.
+  Deferred; the constant is tunable like every other one in this system.
+- **The scheduling roll is a fresh, unmodified `rollD20()`**, not literally
+  the same value as Phase 1's outcome roll — most turns (`say`, `move`,
+  non-effect techniques) never compute an outcome roll at all, so there's
+  nothing to share in the general case. Same underlying die, same
+  non-AI-authored philosophy, not a literal shared value.
+- The exact roll-to-offset formula and the 30-unit range are first-pass,
+  not tuned/validated against real play.
+- How multiple simultaneous NPCs (beyond the single Venom in the test
+  fixture) interleave on one shared timeline — not yet exercised against
+  more than a two-character fixture.
+
+### Phase 3 (built): DC generation for non-combat checks
+
+Phase 1's roll only ever fired when a target had an `armorClass` —
+correct for combat, but it meant *any* targeted `interact` against a
+character (persuading them, handing them an item) was wrongly treated as
+an attack roll against their armor. Phase 3 generalizes the same roll
+mechanism to freeform, non-combat challenges — the other half of D&D's
+own split between an attack roll and a general ability check:
+
+- **`rules/`'s validator now also classifies `checkKind`** — `"combat"`
+  (a hostile action against a character; rolls vs. their `armorClass`,
+  exactly as Phase 1 already did) or `"skill"` (any other attempted
+  challenge with real stakes: persuasion, stealth, climbing, a stuck lock,
+  recalling obscure lore). This is the explicit offensive-intent
+  classification Phase 2's "what this doesn't do" flagged as missing —
+  the engine no longer infers "is this an attack" from "does the target
+  have an armor class."
+- **`"skill"` checks get a DC from `difficultyTier`**, a categorical
+  judgment (`trivial`/`easy`/`medium`/`hard`/`very-hard`/`near-impossible`)
+  mapped by `ai/`'s `difficultyTierToDc` to a fixed number — D&D 5e's own
+  DC table (5/10/15/20/25/30). Same "AI picks a category, the engine
+  computes the number" pattern as `applicableSkillId` and severity — the
+  model never gets to name a raw DC itself.
+- **A `"skill"` check needs no target at all** — `resolveRoll` no longer
+  requires `targetId` when `checkKind` is `"skill"`, so a solo challenge
+  (climbing, lockpicking, a memory check) rolls against the difficulty
+  tier with nobody to target. A `"combat"` check still requires a target
+  with an `armorClass`, exactly as before.
+- **A successful skill check never deals damage** — `ai/`'s action handler
+  only forwards the roll's margin into `applyAction` (and from there,
+  `interact`'s rolled-damage path) when `checkKind === "combat"`; a
+  `"skill"` check's margin decides `outcome` the same way but is never
+  passed through to size damage.
+- Both existing behaviors are otherwise untouched: `checkKind` is omitted
+  entirely (no roll at all) whenever `rules/` judges nothing genuinely at
+  risk, exactly like the existing invalid/neutral judgment; `move` is
+  never rolled; a `use_technique` with no `effectId` is still skipped
+  regardless of `checkKind`.
+
+Verified against the real fixture (mocked model): an untargeted skill
+check overrides a forced `"neutral"` guess to `"valid"` via the roll with
+no damage applied; a targeted skill check (persuading an armored target)
+resolves correctly against the difficulty tier's DC rather than the
+target's armor class, and deals no damage even on success; a combat
+`interact` regression-checks unchanged — still rolls against armor class
+and still applies rolled damage sized from the margin.
+
+**The default tier is Experience-configurable.** `rules/` is always
+instructed to name a `difficultyTier` alongside `checkKind: "skill"`, but
+on the rare case it doesn't, `ai/`'s `difficultyTierToDc` needs some tier
+to fall back to. That fallback is `medium` (DC 15) engine-wide by default,
+but an Experience can override *which tier* the fallback uses —
+`experience.json`'s `difficulty.defaultTier` (`DifficultyConfigSchema` in
+`data/schemas/experience.ts`, resolved the same per-field way
+`escalation` already is, defaulting via `DEFAULT_DIFFICULTY_CONFIG`) lets
+a grittier or more forgiving Experience shift that baseline (e.g.
+`"hard"`) without an engine code change. This intentionally does **not**
+extend to the DC-per-tier table itself (`trivial=5` ... `near-impossible=30`
+stays fixed) or to biasing the model's own tier judgment — only the
+fallback used when a tier is missing.
+
+### What Phase 3 deliberately doesn't do
+
+- The fixed DC table (5/10/15/20/25/30) is D&D 5e's own, unadjusted for
+  this engine's specific skill-value ranges — untuned against real play,
+  same caveat as Phase 2's roll-to-offset formula. Only which tier the
+  no-tier fallback uses is Experience-configurable, not the numbers
+  themselves.
+- No advantage/disadvantage or situational roll modifiers beyond the
+  named skill's flat value.
+
+### Phase 4 (built): contested checks
+
+Phase 3's `"skill"` checks always rolled against a fixed DC — fine for
+climbing a cliff or picking a lock, wrong for persuading or deceiving
+*another character*, who should get to resist with a skill of their own
+(D&D's own opposed ability check: Insight vs. Deception, Perception vs.
+Stealth). Phase 4 makes that DC dynamic when the target is genuinely
+resisting:
+
+- **`rules/`'s validator now also names `defendingSkillId`** — the
+  target's own skill (by id, from their sheet) that resists this specific
+  attempt — whenever a `"skill"` check's target is actually contesting it
+  with a skill of their own, rather than merely present or an inert
+  environmental challenge. Named instead of `difficultyTier`, never both.
+- **`ai/`'s `resolveRoll` rolls the defender's own fresh `rollD20()`** plus
+  that skill's value as the DC for this one attempt, in place of
+  `difficultyTierToDc`'s fixed table — a genuinely dynamic, two-sided roll
+  rather than a static number. Ties favor the attacker (margin ≥ 0 still
+  wins), the same convention every other roll in this engine already uses.
+- **Graceful fallback, not a hard requirement:** if `defendingSkillId` is
+  omitted, there's no target, or the named skill doesn't actually resolve
+  on the target's sheet, `resolveRoll` falls straight back to
+  `difficultyTierToDc`'s fixed DC exactly as Phase 3 already did — a
+  contested check is something rules/ opts into per-attempt, not
+  something the engine has to force.
+- Unchanged: a contested check is still a `"skill"` check under the hood,
+  so it still never deals damage (only a `"combat"` check's margin is
+  ever forwarded to size damage), and it's still skipped entirely
+  whenever `checkKind` itself is omitted.
+
+Verified against the real fixture (mocked model, forced roll sequences):
+an attacker who clearly outrolls the defender's contested check succeeds;
+a defender who clearly outrolls the attacker wins the contest (`neutral`);
+an exact tie favors the attacker; and a `defendingSkillId` naming a skill
+neither character actually has falls back to the fixed difficulty-tier DC
+with only the attacker's own single roll consumed (confirming the
+defender's roll never happens in the fallback path).
+
+### What Phase 4 deliberately doesn't do
+
+- No advantage/disadvantage on either side of a contested roll — same gap
+  as Phase 3's own list, now also true for the defender's roll.
+- The defender always rolls fresh — no "passive" (10 + skill, no roll)
+  option the way D&D itself sometimes uses for background contests like
+  Stealth vs. passive Perception. Every roll in this engine is dynamic by
+  design; this was a deliberate choice, not an oversight (see the
+  Phase 4 design discussion), but it does mean a contested check is
+  never fully deterministic even for repeated, low-stakes attempts.
+- A contested check's own margin/outcome isn't surfaced anywhere the
+  narration model can see *why* it lost or won beyond the tool result's
+  `outcome` field — no breakdown of "you rolled X, they rolled Y" is
+  exposed today.
 
 ---
 

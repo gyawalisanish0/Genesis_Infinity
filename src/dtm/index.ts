@@ -137,6 +137,24 @@ export class Dtm {
     return row ? rowToEvent(row) : null;
   }
 
+  /**
+   * The most recent `turn.scheduled` event for an entity, if any (used by
+   * scheduler/ to derive when a character is next due — same "sheet is
+   * static, state is derived from the log" pattern as lastPosition). No
+   * event yet means the character has never taken a scheduled turn, so
+   * scheduler/ treats them as due immediately.
+   */
+  lastScheduledTurn(experienceId: string, entityId: string): DtmEvent | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM dtm_events
+         WHERE experience_id = ? AND entity_id = ? AND type = 'turn.scheduled'
+         ORDER BY timestamp DESC, id DESC LIMIT 1`,
+      )
+      .get(experienceId, entityId);
+    return row ? rowToEvent(row) : null;
+  }
+
   close(): void {
     this.db.close();
   }

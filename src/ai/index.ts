@@ -1,4 +1,4 @@
-import type { Action, ActionResult, RejectionResult, ToolContext } from "../tools/index.js";
+import type { Action, ActionOutcome, ActionResult, RejectionResult, ToolContext } from "../tools/index.js";
 import {
   getScopeTool,
   getCharacterSheetTool,
@@ -9,11 +9,12 @@ import {
   applyAction,
   rejectAction,
 } from "../tools/index.js";
-import { RuleValidator } from "../rules/index.js";
+import { RuleValidator, type RuleValidation } from "../rules/index.js";
+import type { DifficultyTier } from "../data/schemas/experience.js";
 import { NarrationAuditor } from "../audit/index.js";
 import { Summarizer } from "../summarizer/index.js";
 import { getState, type StateSnapshot } from "../state/index.js";
-import type { LlmDriver, ToolDef } from "./llmDriver.js";
+import type { ChatDriverSession, LlmDriver, ToolDef } from "./llmDriver.js";
 import { createLlamaCppDriver, type LlamaCppBackendConfig } from "./llamaCppDriver.js";
 import { createApiDriver, type ApiBackendConfig } from "./apiDriver.js";
 
@@ -65,6 +66,113 @@ function scopeStateToAction(state: StateSnapshot, action: Action): StateSnapshot
     ...state,
     characters: state.characters.filter((c) => relevantIds.has(c.sheet.id)),
   };
+}
+
+function rollD20(): number {
+  return 1 + Math.floor(Math.random() * 20);
+}
+
+/**
+ * Maps rules/'s categorical difficultyTier to a real DC — D&D 5e's own
+ * table, fixed engine-wide (not Experience-configurable; only the
+ * fallback tier below is). The model never gets to name a raw number
+ * itself (same "AI picks a category, the engine computes the number"
+ * pattern as severity and applicableSkillId).
+ */
+const DC_BY_TIER: Record<DifficultyTier, number> = {
+  trivial: 5,
+  easy: 10,
+  medium: 15,
+  hard: 20,
+  "very-hard": 25,
+  "near-impossible": 30,
+};
+
+/**
+ * rules/ is always instructed to name a difficultyTier alongside
+ * checkKind "skill" — this only matters on the rare case it doesn't.
+ * Falls back to the Experience's configured default tier
+ * (`LoadedExperience.difficulty.defaultTier`, engine default "medium" —
+ * see data/schemas/experience.ts's DifficultyConfigSchema), not a
+ * hardcoded constant, so an Experience can tune how forgiving an
+ * unclassified skill check is without engine code changes.
+ */
+function difficultyTierToDc(tier: RuleValidation["difficultyTier"], defaultTier: DifficultyTier): number {
+  return DC_BY_TIER[tier ?? defaultTier];
+}
+
+/**
+ * Overrides rules/'s own valid/neutral guess with a real dice roll once
+ * rules/ has classified this attempt as a real check (its "invalid" gate
+ * already ran and passed) — d20 plus the acting character's
+ * applicableSkillId value (rules/'s own categorical judgment) against a DC
+ * that depends on checkKind:
+ * - "combat" — the target's effective armorClass, reusing real
+ *   sheet/effectiveStats data. Requires a target with one; returns
+ *   undefined otherwise (rules/'s own judgment stands unchanged).
+ * - "skill", contested — when rules/ names a `defendingSkillId` that
+ *   actually resolves on a named target's sheet, the DC is dynamic: the
+ *   target's own fresh `rollD20()` plus that skill's value (D&D's opposed
+ *   ability check — Insight vs. Deception, Perception vs. Stealth), not a
+ *   fixed number. Ties favor the attacker, matching the roll >= DC
+ *   convention every other check already uses.
+ * - "skill", uncontested — `difficultyTierToDc`'s fixed table, no target
+ *   required at all (see docs/BACKEND_ARCHITECTURE.md's Dynamic
+ *   Timeline-Driven Turn Engine) — a climb, a bluff at nobody in
+ *   particular, or recalling lore has no one to roll against.
+ * Returns undefined — rules/'s own judgment stands unchanged — whenever
+ * checkKind is omitted entirely (nothing genuinely at risk); `move` is
+ * never rolled, since its Action variant carries no checkKind-worthy
+ * stakes. Also skipped for a `use_technique` whose TechniqueDef has no
+ * `effectId` (e.g. Instant Transmission, a pure `relocatesToTarget`
+ * teleport with nothing to resist) — a roll only makes sense for a
+ * technique that actually has a mechanical effect to land.
+ */
+function resolveRoll(
+  ctx: ToolContext,
+  state: StateSnapshot,
+  action: Action,
+  validation: RuleValidation,
+): { outcome: ActionOutcome; margin: number } | undefined {
+  if (action.type === "move" || !validation.checkKind) {
+    return undefined;
+  }
+
+  if (action.type === "use_technique") {
+    const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
+    const technique = actorSheet?.techniques.find((t) => t.id === action.techniqueId);
+    if (!technique?.effectId) {
+      return undefined;
+    }
+  }
+
+  let dc: number;
+  if (validation.checkKind === "combat") {
+    if (!("targetId" in action) || !action.targetId) {
+      return undefined;
+    }
+    const targetArmorClass = state.characters.find((c) => c.sheet.id === action.targetId)?.effectiveStats.armorClass;
+    if (targetArmorClass === undefined) {
+      return undefined;
+    }
+    dc = targetArmorClass;
+  } else {
+    const defender =
+      "targetId" in action && action.targetId
+        ? ctx.loaded.characters.find((c) => c.id === action.targetId)
+        : undefined;
+    const defendingSkillValue = defender?.skills.find((s) => s.id === validation.defendingSkillId)?.value;
+    dc =
+      defendingSkillValue !== undefined
+        ? rollD20() + defendingSkillValue
+        : difficultyTierToDc(validation.difficultyTier, ctx.loaded.difficulty.defaultTier);
+  }
+
+  const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
+  const skillValue = actorSheet?.skills.find((s) => s.id === validation.applicableSkillId)?.value ?? 0;
+
+  const margin = rollD20() + skillValue - dc;
+  return { outcome: margin >= 0 ? "valid" : "neutral", margin };
 }
 
 function describeAction(action: Action): string {
@@ -169,22 +277,53 @@ export interface AiSessionOptions {
   backend: BackendConfig;
   toolCtx: ToolContext;
   systemPrompt: string;
+  /**
+   * How many characters' own narrative sessions may be resident (i.e.
+   * hold a live driver session) at once - see the per-character session
+   * pool below. Pass Infinity for a backend with no scarce resource to
+   * bound (apiDriver.ts); a local backend should pass however many
+   * sequences its driver actually reserved for this
+   * (llamaCppDriver.ts's narrativeWorkerSequences).
+   */
+  maxResidentNarrativeSessions: number;
   /** Called after each tool call resolves — used by io/'s debug-dump mode. */
   onToolCall?: (call: ToolCallRecord) => void;
 }
 
 export interface AiSession {
-  /** Sends one user turn through the agentic loop (check tools, then narration or an action). */
-  prompt(input: string, turnTimestamp: number): Promise<TurnResult>;
+  /**
+   * Sends one user turn through the agentic loop (check tools, then
+   * narration or an action) on behalf of `characterId` - each character
+   * (including `null` for a not-yet-assigned player, see core/'s
+   * EngineOptions.playerCharacterId) gets its own persistent narrative
+   * session/history, not one shared session narrating everyone - see the
+   * per-character pool below.
+   */
+  prompt(characterId: string | null, input: string, turnTimestamp: number): Promise<TurnResult>;
   dispose(): Promise<void>;
 }
 
 /**
+ * One character's own narrative session and context-efficiency bookkeeping
+ * (see the SUBBLOCK/BLOCK rollup constants below) - each character gets
+ * its own persistent conversation/continuity, not one shared session
+ * narrating everyone via synthetic prompts. `lastUsedTurn` drives the
+ * per-character session pool's LRU eviction (see resolveSession).
+ */
+interface CharacterSessionState {
+  session: ChatDriverSession;
+  pendingNarrations: string[];
+  subblockSummaries: string[];
+  blockSummaries: string[];
+  lastUsedTurn: number;
+}
+
+/**
  * Starts the driver (local node-llama-cpp or a remote API - see
- * BackendConfig), opens independent chat sessions for the narrative
- * session, rules/'s validation session, and audit/'s narration-consistency
- * session (none shares history with the others), and wires up the beta
- * tool set. Tier 1 per docs/BACKEND_ARCHITECTURE.md's AI Orchestration: one model
+ * BackendConfig), opens independent chat sessions for rules/'s validation
+ * session and audit/'s narration-consistency session (neither shares
+ * history with any narrative session), and wires up the beta tool set.
+ * Tier 1 per docs/BACKEND_ARCHITECTURE.md's AI Orchestration: one model
  * handles narrative, tool-call decisions, rule validation, and narration
  * auditing in sequence.
  */
@@ -195,23 +334,92 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
   const narrationAuditor = new NarrationAuditor(driver);
   const summarizer = new Summarizer(driver);
 
-  // Context-efficiency: the narrative session's history would otherwise
-  // grow every turn forever (see docs/BACKEND_ARCHITECTURE.md's Context
-  // Efficiency section). Every SUBBLOCK_TURN_COUNT turns, recent
+  // Context-efficiency: a character's own narrative session would
+  // otherwise grow every one of *their* turns forever (see
+  // docs/BACKEND_ARCHITECTURE.md's Context Efficiency section). Every
+  // SUBBLOCK_TURN_COUNT turns that character takes, their recent
   // narrations are compressed into one ~SUBBLOCK_TARGET_WORDS-word
   // "subblock" summary; every SUBBLOCKS_PER_BLOCK subblocks, those are
   // compressed again into one coarser "block" summary, so long-run growth
-  // stays bounded (logarithmic-ish) rather than accumulating one subblock
-  // per few turns forever. blockSummaries + subblockSummaries together are
-  // the full current recap, resent via compactToSummary each time either
-  // level rolls up.
+  // stays bounded (logarithmic-ish) per character rather than
+  // accumulating one subblock per few turns forever. blockSummaries +
+  // subblockSummaries together are that character's full current recap,
+  // resent via compactContext each time either level rolls up.
   const SUBBLOCK_TURN_COUNT = 5;
   const SUBBLOCK_TARGET_WORDS = 50;
   const SUBBLOCKS_PER_BLOCK = 10;
   const BLOCK_TARGET_WORDS = 75;
-  let pendingNarrations: string[] = [];
-  let subblockSummaries: string[] = [];
-  let blockSummaries: string[] = [];
+
+  // Per-character narrative session pool. `resident` holds whichever
+  // characters currently have a live driver session, bounded to
+  // options.maxResidentNarrativeSessions (see llamaCppDriver.ts's bounded
+  // sequence pool - Infinity on the API backend, which has nothing scarce
+  // to evict). `coldRecaps` holds the last known recap for a character
+  // who's been evicted, seeded back into their session when they're next
+  // resident - see resolveSession.
+  const resident = new Map<string | null, CharacterSessionState>();
+  const coldRecaps = new Map<string | null, string>();
+
+  /**
+   * Returns characterId's own CharacterSessionState, creating (or
+   * restoring from a cold recap) if not currently resident. Evicts the
+   * least-recently-used resident character first if the pool is full -
+   * forcing an immediate rollup of any of its unflushed pendingNarrations
+   * before eviction, so a resumed character's reload cost is always
+   * bounded to "system prompt + one short recap string," never
+   * proportional to how many turns it sat evicted (the concrete cap on
+   * local-backend reload latency this pool exists for). The
+   * already-resident fast path is checked first and unconditionally -
+   * without it, a cap of 1 (or any cap, once every seat is full) would
+   * evict and reconstruct the SAME character's own session every single
+   * turn instead of just reusing it.
+   */
+  async function resolveSession(characterId: string | null, turnTimestamp: number): Promise<CharacterSessionState> {
+    const existing = resident.get(characterId);
+    if (existing) {
+      existing.lastUsedTurn = turnTimestamp;
+      return existing;
+    }
+
+    if (resident.size >= options.maxResidentNarrativeSessions) {
+      let victimId: string | null = null;
+      let victim: CharacterSessionState | undefined;
+      for (const [id, state] of resident) {
+        if (!victim || state.lastUsedTurn < victim.lastUsedTurn) {
+          victimId = id;
+          victim = state;
+        }
+      }
+      if (victim) {
+        if (victim.pendingNarrations.length > 0) {
+          victim.subblockSummaries.push(
+            await summarizer.summarize(victim.pendingNarrations, SUBBLOCK_TARGET_WORDS),
+          );
+          victim.pendingNarrations = [];
+        }
+        const finalRecap = [...victim.blockSummaries, ...victim.subblockSummaries].join(" ");
+        victim.session.compactContext?.(finalRecap);
+        await victim.session.release?.();
+        coldRecaps.set(victimId, finalRecap);
+        resident.delete(victimId);
+      }
+    }
+
+    const session = driver.createNarrativeSession(options.systemPrompt);
+    const recap = coldRecaps.get(characterId);
+    if (recap !== undefined) {
+      session.compactContext?.(recap);
+    }
+    const state: CharacterSessionState = {
+      session,
+      pendingNarrations: [],
+      subblockSummaries: [],
+      blockSummaries: [],
+      lastUsedTurn: turnTimestamp,
+    };
+    resident.set(characterId, state);
+    return state;
+  }
 
   const turn = { timestamp: 0 };
   let turnToolCalls: ToolCallRecord[] = [];
@@ -432,17 +640,28 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           return record("action", params, result);
         }
 
-        return record("action", params, applyAction(options.toolCtx, action, validation.outcome));
+        const rolled = resolveRoll(options.toolCtx, state, action, validation);
+        // rollMargin only ever sizes interact's rolled damage (see tools/'s
+        // applyRolledDamage) — a "skill" check's margin decides outcome
+        // above but must never itself deal damage.
+        const damageMargin = validation.checkKind === "combat" ? rolled?.margin : undefined;
+
+        return record(
+          "action",
+          params,
+          applyAction(options.toolCtx, action, rolled?.outcome ?? validation.outcome, damageMargin),
+        );
       },
     },
   ];
 
-  const session = driver.createChatSession(options.systemPrompt);
-
   return {
-    async prompt(input, turnTimestamp) {
+    async prompt(characterId, input, turnTimestamp) {
       turn.timestamp = turnTimestamp;
       turnToolCalls = [];
+
+      const state = await resolveSession(characterId, turnTimestamp);
+      const session = state.session;
 
       let { reasoning, narration } = extractReasoning(await session.prompt(input, tools));
 
@@ -542,19 +761,22 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       // compactContext doc comment) - called exactly once per turn, every
       // turn, so there's one pipeline deciding what to shrink and when,
       // not a driver-internal mechanism plus a separate caller-triggered
-      // one running independently of each other.
-      pendingNarrations.push(narration);
+      // one running independently of each other. Scoped to this
+      // character's own rollup cadence/state (see CharacterSessionState) -
+      // a rarely-acting NPC rolls up based on its own turn count, not a
+      // shared global one.
+      state.pendingNarrations.push(narration);
       let rollupSummary: string | undefined;
-      if (pendingNarrations.length >= SUBBLOCK_TURN_COUNT) {
-        subblockSummaries.push(await summarizer.summarize(pendingNarrations, SUBBLOCK_TARGET_WORDS));
-        pendingNarrations = [];
+      if (state.pendingNarrations.length >= SUBBLOCK_TURN_COUNT) {
+        state.subblockSummaries.push(await summarizer.summarize(state.pendingNarrations, SUBBLOCK_TARGET_WORDS));
+        state.pendingNarrations = [];
 
-        if (subblockSummaries.length >= SUBBLOCKS_PER_BLOCK) {
-          blockSummaries.push(await summarizer.summarize(subblockSummaries, BLOCK_TARGET_WORDS));
-          subblockSummaries = [];
+        if (state.subblockSummaries.length >= SUBBLOCKS_PER_BLOCK) {
+          state.blockSummaries.push(await summarizer.summarize(state.subblockSummaries, BLOCK_TARGET_WORDS));
+          state.subblockSummaries = [];
         }
 
-        rollupSummary = [...blockSummaries, ...subblockSummaries].join(" ");
+        rollupSummary = [...state.blockSummaries, ...state.subblockSummaries].join(" ");
       }
       session.compactContext?.(rollupSummary);
 

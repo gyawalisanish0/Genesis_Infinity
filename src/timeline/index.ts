@@ -18,6 +18,8 @@ const MS_PER_UNIT = 1000 / UNITS_PER_SECOND;
 export interface Timeline {
   /** The current timeline unit (integer), elapsed since createTimeline was called. */
   currentUnit(): number;
+  /** Converts a number of timeline units into real milliseconds, at this timeline's fixed ratio (see scheduler/). */
+  unitsToMs(units: number): number;
 }
 
 /**
@@ -29,5 +31,6 @@ export function createTimeline(now: () => number = Date.now): Timeline {
   const startMs = now();
   return {
     currentUnit: () => Math.floor((now() - startMs) / MS_PER_UNIT),
+    unitsToMs: (units: number) => units * MS_PER_UNIT,
   };
 }

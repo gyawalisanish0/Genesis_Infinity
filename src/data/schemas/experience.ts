@@ -35,6 +35,28 @@ export const DEFAULT_ESCALATION_CONFIG: Required<EscalationConfig> = {
   debuffDurationUnits: 60,
 };
 
+/** The six D&D-5e-inspired difficulty tiers rules/'s validator can name for a "skill" check (see rules/index.ts's RuleValidation.difficultyTier). */
+export const DIFFICULTY_TIERS = ["trivial", "easy", "medium", "hard", "very-hard", "near-impossible"] as const;
+export type DifficultyTier = (typeof DIFFICULTY_TIERS)[number];
+
+/**
+ * Tunable for ai/'s difficultyTierToDc — which tier stands in for a
+ * "skill" check when rules/'s validator omits difficultyTier despite
+ * naming checkKind "skill" (it's always instructed to include one; this
+ * only matters if it doesn't). The DC-per-tier table itself
+ * (trivial=5 ... near-impossible=30) is not Experience-configurable —
+ * only which tier is the fallback.
+ */
+export const DifficultyConfigSchema = z.object({
+  defaultTier: z.enum(DIFFICULTY_TIERS).optional(),
+});
+export type DifficultyConfig = z.infer<typeof DifficultyConfigSchema>;
+
+/** Engine default for DifficultyConfig.defaultTier if an Experience doesn't declare one. */
+export const DEFAULT_DIFFICULTY_CONFIG: Required<DifficultyConfig> = {
+  defaultTier: "medium",
+};
+
 /**
  * Minimal Experience schema, scoped for now to the ability/skill/effect/item
  * ruleset declaration, escalation tuning, and character starting placement
@@ -53,6 +75,7 @@ export const ExperienceSchema = z.object({
   effects: z.array(EffectDefSchema).optional(),
   items: z.array(ItemDefSchema).optional(),
   escalation: EscalationConfigSchema.optional(),
+  difficulty: DifficultyConfigSchema.optional(),
   characters: z.array(CharacterPlacementSchema).optional(),
 });
 export type Experience = z.infer<typeof ExperienceSchema>;

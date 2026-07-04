@@ -65,11 +65,40 @@ export interface ChatDriverSession {
    * use `session.compactContext?.(...)`.
    */
   compactContext?(summary?: string): void;
+  /**
+   * Returns whatever scarce backing resource this session holds (e.g. a
+   * local llamaCppDriver.ts sequence) to the driver's pool, so a later
+   * createNarrativeSession call can reuse it for a different character —
+   * see ai/index.ts's per-character session eviction. Async because a
+   * real release (clearing a sequence's KV cache) genuinely awaits
+   * completion before the resource is safe to hand to someone else.
+   * Optional: absent/no-op for a backend with nothing scarce to release
+   * (apiDriver.ts's sessions are just in-memory arrays) or for a session
+   * created via plain createChatSession, which is never released.
+   */
+  release?(): Promise<void>;
 }
 
 export interface LlmDriver {
-  /** Starts a new independent chat session with the given system prompt. */
+  /**
+   * Starts a new, permanent chat session with the given system prompt —
+   * used only for the engine's three fixed, character-agnostic roles
+   * (rules/'s RuleValidator, audit/'s NarrationAuditor, summarizer/'s
+   * Summarizer), each of which calls resetHistory() before every use and
+   * lives for the whole session; never released.
+   */
   createChatSession(systemPrompt: string): ChatDriverSession;
+  /**
+   * Starts a reusable, per-character narrative session — one per
+   * character, as opposed to createChatSession's fixed shared roles. A
+   * backend with no scarce resource to manage (apiDriver.ts) can just
+   * create these identically to createChatSession, kept resident forever.
+   * A backend with a bounded resource (llamaCppDriver.ts's sequences)
+   * draws from a smaller dedicated pool — see ai/index.ts's per-character
+   * eviction, which calls session.release() before reusing the pool slot
+   * for a different character.
+   */
+  createNarrativeSession(systemPrompt: string): ChatDriverSession;
   /** Releases any underlying resources (model, context, HTTP client, etc). */
   dispose(): Promise<void>;
 }

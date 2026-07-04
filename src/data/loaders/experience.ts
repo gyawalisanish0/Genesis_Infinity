@@ -3,8 +3,10 @@ import { join } from "node:path";
 import {
   ExperienceSchema,
   DEFAULT_ESCALATION_CONFIG,
+  DEFAULT_DIFFICULTY_CONFIG,
   type Experience,
   type EscalationConfig,
+  type DifficultyConfig,
 } from "../schemas/experience.js";
 import { WorldSchema, type World } from "../schemas/world.js";
 import { CharacterSheetSchema, type CharacterSheet } from "../schemas/character.js";
@@ -15,6 +17,7 @@ export interface LoadedExperience {
   experience: Experience;
   ruleset: { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[]; items: ItemDef[] };
   escalation: Required<EscalationConfig>;
+  difficulty: Required<DifficultyConfig>;
   world: World;
   characters: CharacterSheet[];
 }
@@ -32,6 +35,13 @@ function resolveEscalationConfig(declared: EscalationConfig | undefined): Requir
   };
 }
 
+/** Resolves an Experience's declared difficulty config against the engine default, per-field, same pattern as resolveEscalationConfig. */
+function resolveDifficultyConfig(declared: DifficultyConfig | undefined): Required<DifficultyConfig> {
+  return {
+    defaultTier: declared?.defaultTier ?? DEFAULT_DIFFICULTY_CONFIG.defaultTier,
+  };
+}
+
 async function readJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf-8"));
 }
@@ -43,8 +53,9 @@ async function readJson(path: string): Promise<unknown> {
  *   <dir>/characters/*.json (CharacterSheetSchema, one per file)
  *
  * Ruleset abilities/skills/effects/items are resolved against the defaults
- * via resolveRulesetDefs (per-entry fallback), and escalation tuning
- * against DEFAULT_ESCALATION_CONFIG (per-field fallback), before being
+ * via resolveRulesetDefs (per-entry fallback), escalation tuning against
+ * DEFAULT_ESCALATION_CONFIG, and difficulty tuning against
+ * DEFAULT_DIFFICULTY_CONFIG (both per-field fallback), before being
  * returned.
  */
 export async function loadExperience(dir: string): Promise<LoadedExperience> {
@@ -61,6 +72,7 @@ export async function loadExperience(dir: string): Promise<LoadedExperience> {
 
   const ruleset = resolveRulesetDefs(experience);
   const escalation = resolveEscalationConfig(experience.escalation);
+  const difficulty = resolveDifficultyConfig(experience.difficulty);
 
-  return { experience, ruleset, escalation, world, characters };
+  return { experience, ruleset, escalation, difficulty, world, characters };
 }
