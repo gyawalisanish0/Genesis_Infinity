@@ -1631,11 +1631,27 @@ target's armor class, and deals no damage even on success; a combat
 `interact` regression-checks unchanged — still rolls against armor class
 and still applies rolled damage sized from the margin.
 
+**The default tier is Experience-configurable.** `rules/` is always
+instructed to name a `difficultyTier` alongside `checkKind: "skill"`, but
+on the rare case it doesn't, `ai/`'s `difficultyTierToDc` needs some tier
+to fall back to. That fallback is `medium` (DC 15) engine-wide by default,
+but an Experience can override *which tier* the fallback uses —
+`experience.json`'s `difficulty.defaultTier` (`DifficultyConfigSchema` in
+`data/schemas/experience.ts`, resolved the same per-field way
+`escalation` already is, defaulting via `DEFAULT_DIFFICULTY_CONFIG`) lets
+a grittier or more forgiving Experience shift that baseline (e.g.
+`"hard"`) without an engine code change. This intentionally does **not**
+extend to the DC-per-tier table itself (`trivial=5` ... `near-impossible=30`
+stays fixed) or to biasing the model's own tier judgment — only the
+fallback used when a tier is missing.
+
 ### What Phase 3 deliberately doesn't do
 
 - The fixed DC table (5/10/15/20/25/30) is D&D 5e's own, unadjusted for
   this engine's specific skill-value ranges — untuned against real play,
-  same caveat as Phase 2's roll-to-offset formula.
+  same caveat as Phase 2's roll-to-offset formula. Only which tier the
+  no-tier fallback uses is Experience-configurable, not the numbers
+  themselves.
 - No contested checks (two characters rolling against each other, e.g.
   Deception vs. Insight) — `checkKind: "skill"` is always a fixed DC, not
   an opposed roll against another character's own skill.

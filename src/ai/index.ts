@@ -10,6 +10,7 @@ import {
   rejectAction,
 } from "../tools/index.js";
 import { RuleValidator, type RuleValidation } from "../rules/index.js";
+import type { DifficultyTier } from "../data/schemas/experience.js";
 import { NarrationAuditor } from "../audit/index.js";
 import { Summarizer } from "../summarizer/index.js";
 import { getState, type StateSnapshot } from "../state/index.js";
@@ -73,26 +74,31 @@ function rollD20(): number {
 
 /**
  * Maps rules/'s categorical difficultyTier to a real DC — D&D 5e's own
- * table. The model never gets to name a raw number itself (same "AI picks
- * a category, the engine computes the number" pattern as severity and
- * applicableSkillId).
+ * table, fixed engine-wide (not Experience-configurable; only the
+ * fallback tier below is). The model never gets to name a raw number
+ * itself (same "AI picks a category, the engine computes the number"
+ * pattern as severity and applicableSkillId).
  */
-function difficultyTierToDc(tier: RuleValidation["difficultyTier"]): number {
-  switch (tier) {
-    case "trivial":
-      return 5;
-    case "easy":
-      return 10;
-    case "hard":
-      return 20;
-    case "very-hard":
-      return 25;
-    case "near-impossible":
-      return 30;
-    case "medium":
-    default:
-      return 15;
-  }
+const DC_BY_TIER: Record<DifficultyTier, number> = {
+  trivial: 5,
+  easy: 10,
+  medium: 15,
+  hard: 20,
+  "very-hard": 25,
+  "near-impossible": 30,
+};
+
+/**
+ * rules/ is always instructed to name a difficultyTier alongside
+ * checkKind "skill" — this only matters on the rare case it doesn't.
+ * Falls back to the Experience's configured default tier
+ * (`LoadedExperience.difficulty.defaultTier`, engine default "medium" —
+ * see data/schemas/experience.ts's DifficultyConfigSchema), not a
+ * hardcoded constant, so an Experience can tune how forgiving an
+ * unclassified skill check is without engine code changes.
+ */
+function difficultyTierToDc(tier: RuleValidation["difficultyTier"], defaultTier: DifficultyTier): number {
+  return DC_BY_TIER[tier ?? defaultTier];
 }
 
 /**
@@ -145,7 +151,7 @@ function resolveRoll(
     }
     dc = targetArmorClass;
   } else {
-    dc = difficultyTierToDc(validation.difficultyTier);
+    dc = difficultyTierToDc(validation.difficultyTier, ctx.loaded.difficulty.defaultTier);
   }
 
   const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
