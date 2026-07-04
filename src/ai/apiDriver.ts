@@ -205,6 +205,13 @@ export function createApiDriver(config: ApiBackendConfig): LlmDriver {
     createChatSession(systemPrompt: string): ChatDriverSession {
       return new ApiChatSession(config, systemPrompt);
     },
+    // A narrative session costs nothing structurally here (just an
+    // in-memory message array over stateless HTTP calls) - identical to
+    // createChatSession, so ai/index.ts's per-character pool never has
+    // anything to evict on this backend (see AiSessionOptions.maxResidentNarrativeSessions).
+    createNarrativeSession(systemPrompt: string): ChatDriverSession {
+      return new ApiChatSession(config, systemPrompt);
+    },
     async dispose() {
       // No persistent resources to release for a stateless HTTP client.
     },

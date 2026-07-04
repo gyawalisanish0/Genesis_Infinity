@@ -62,10 +62,13 @@ class LlamaCppChatSession implements ChatDriverSession {
   private readonly session: LlamaChatSession;
   private readonly llama: Llama;
   private readonly grammarCache = new WeakMap<JsonSchema, Promise<LlamaJsonSchemaGrammar<never>>>();
+  /** Present only for a session created via createNarrativeSession - releases its sequence back to the pool. Absent for the 3 permanent createChatSession sessions, which are never released. */
+  private readonly onRelease?: () => void;
 
-  constructor(llama: Llama, sequence: LlamaContextSequence, systemPrompt: string) {
+  constructor(llama: Llama, sequence: LlamaContextSequence, systemPrompt: string, onRelease?: () => void) {
     this.llama = llama;
     this.session = new LlamaChatSession({ contextSequence: sequence, systemPrompt });
+    this.onRelease = onRelease;
   }
 
   async prompt(input: string, tools?: ToolDef[]): Promise<string> {
@@ -127,24 +130,66 @@ class LlamaCppChatSession implements ChatDriverSession {
     }
     this.session.setChatHistory(history);
   }
+
+  /**
+   * Erases this session's sequence's actual KV cache (sequence.clearHistory()
+   * - a real erase, not just a JS-side history reset - verified against
+   * node-llama-cpp's implementation) and returns it to the driver's free
+   * list via onRelease, so a later createNarrativeSession call can bind a
+   * fresh LlamaChatSession to the same, now-empty sequence for a different
+   * character. There's no API to rebind an existing LlamaChatSession to a
+   * new system prompt/conversation in place - its constructor never
+   * touches the sequence's physical state, so constructing a brand new
+   * wrapper per acquire (see createNarrativeSession below) is the only
+   * viable reuse pattern, not just the simplest one.
+   */
+  async release(): Promise<void> {
+    if (!this.onRelease) return;
+    await this.session.sequence.clearHistory();
+    this.session.dispose({ disposeSequence: false });
+    this.onRelease();
+  }
 }
 
 export interface LlamaCppBackendConfig {
   modelPath: string;
+  /**
+   * How many sequences (see createContext's doc comment below) are set
+   * aside for reusable per-character narrative sessions (ai/index.ts's
+   * createNarrativeSession pool), on top of the 3 permanent sequences for
+   * rules/audit/summarizer. Each sequence gets its own full contextSize-sized
+   * KV cache (not divided), so raising this is a real, predictable memory
+   * cost - defaults to DEFAULT_NARRATIVE_WORKER_SEQUENCES.
+   */
+  narrativeWorkerSequences?: number;
 }
 
 /**
+ * Engine default for LlamaCppBackendConfig.narrativeWorkerSequences.
+ * Covers "player + one active NPC" resident with zero eviction cost in a
+ * typical small cast; a larger simultaneous cast starts paying the
+ * bounded reload cost ai/index.ts's eviction policy caps (see
+ * docs/BACKEND_ARCHITECTURE.md).
+ */
+export const DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2;
+
+/**
  * LlmDriver implementation backed by a local node-llama-cpp model.
- * Pre-allocates 4 sequences on one context (matching ai/'s narrative/
- * rules/audit/summarizer sessions) - contextSize is bounded explicitly
- * rather than "auto" (which tries to size up to the model's full trained
- * context, often 128K+ tokens) for the same reason `sequences` is bounded:
- * either gap can exhaust available RAM or, if too small, overflow mid-turn
- * (see the 4096 -> 8192 bump after a real crash on a Hugging Face CPU
- * Space). Local sessions implement compactContext (see llmDriver.ts) via
- * LlamaChatSession's getChatHistory()/setChatHistory() - the fourth
- * pre-allocated sequence is for ai/'s summarizer session, whose output
- * now takes effect on local sessions too, same as the API backend.
+ * Pre-allocates `3 + narrativeWorkerSequences` sequences on one context -
+ * contextSize is bounded explicitly rather than "auto" (which tries to
+ * size up to the model's full trained context, often 128K+ tokens) for
+ * the same reason `sequences` is bounded: either gap can exhaust
+ * available RAM or, if too small, overflow mid-turn (see the 4096 -> 8192
+ * bump after a real crash on a Hugging Face CPU Space). Local sessions
+ * implement compactContext (see llmDriver.ts) via LlamaChatSession's
+ * getChatHistory()/setChatHistory(). The first 3 sequences are permanent,
+ * handed out via createChatSession to ai/'s rules/audit/summarizer
+ * sessions (in that order, at createAiSession's setup) and never
+ * released; the rest form a free list for createNarrativeSession's
+ * per-character sessions, reused via release() (see
+ * LlamaCppChatSession.release's doc comment) rather than one dedicated
+ * sequence per character - see ai/index.ts's per-character eviction pool
+ * and docs/BACKEND_ARCHITECTURE.md.
  */
 export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promise<LlmDriver> {
   const cpuQuota = detectCpuQuota();
@@ -157,23 +202,32 @@ export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promi
   console.log(`[cpu-quota] llama.maxThreads resolved to: ${llama.maxThreads}`);
 
   const model = await llama.loadModel({ modelPath: config.modelPath });
-  const context = await model.createContext({ contextSize: 8192, sequences: 4 });
+  const narrativeWorkerSequences = config.narrativeWorkerSequences ?? DEFAULT_NARRATIVE_WORKER_SEQUENCES;
+  const context = await model.createContext({ contextSize: 8192, sequences: 3 + narrativeWorkerSequences });
 
-  const sequences: LlamaContextSequence[] = [
+  const fixedSequences: LlamaContextSequence[] = [context.getSequence(), context.getSequence(), context.getSequence()];
+  let nextFixedIndex = 0;
+
+  const freeSequences: LlamaContextSequence[] = Array.from({ length: narrativeWorkerSequences }, () =>
     context.getSequence(),
-    context.getSequence(),
-    context.getSequence(),
-    context.getSequence(),
-  ];
-  let nextSequenceIndex = 0;
+  );
 
   return {
     createChatSession(systemPrompt: string): ChatDriverSession {
-      if (nextSequenceIndex >= sequences.length) {
-        throw new Error(`llamaCppDriver: no more sequences available (only ${sequences.length} pre-allocated)`);
+      if (nextFixedIndex >= fixedSequences.length) {
+        throw new Error(`llamaCppDriver: no more fixed sequences available (only ${fixedSequences.length} pre-allocated)`);
       }
-      const sequence = sequences[nextSequenceIndex++];
+      const sequence = fixedSequences[nextFixedIndex++];
       return new LlamaCppChatSession(llama, sequence, systemPrompt);
+    },
+    createNarrativeSession(systemPrompt: string): ChatDriverSession {
+      const sequence = freeSequences.pop();
+      if (!sequence) {
+        // Shouldn't happen - ai/index.ts's eviction pool never holds more
+        // than narrativeWorkerSequences resident characters at once.
+        throw new Error(`llamaCppDriver: no free narrative sequences available (only ${narrativeWorkerSequences} pre-allocated)`);
+      }
+      return new LlamaCppChatSession(llama, sequence, systemPrompt, () => freeSequences.push(sequence));
     },
     async dispose() {
       await context.dispose();

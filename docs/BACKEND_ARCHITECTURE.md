@@ -426,6 +426,96 @@ engine detects available RAM against cumulative model footprint and picks SAL
 or MML accordingly; an engine constant can force one strategy regardless of
 detected capability.
 
+### Per-Character Narrative Sessions (built)
+
+Orthogonal to the tier system above (which splits *jobs* — narrative vs.
+rules vs. summarization — across models): within the narrative job
+itself, every character used to share **one** narrative session. An
+NPC's autonomous turn (`core/`'s `Engine.runNpcTurn`) reused the same
+session as the player's own turns via a synthetic "it's now Venom's
+turn" prompt — no character had continuity of its own beyond what
+`dtm/`'s event log could re-derive each time.
+
+Each character now gets its own persistent narrative session, with a
+different cost profile per backend:
+
+- **API backend** (`apiDriver.ts`) — free. A `ChatDriverSession` here is
+  just an in-memory message array over stateless HTTP calls;
+  `createNarrativeSession` is identical to `createChatSession`, and
+  `ai/`'s per-character pool (below) is given `maxResidentNarrativeSessions:
+  Infinity` — nothing is ever evicted.
+- **Local llama.cpp backend** (`llamaCppDriver.ts`) — bounded. Each
+  `LlamaContextSequence` is a real, memory-backed KV cache; the driver
+  now reserves `3 + narrativeWorkerSequences` sequences instead of a flat
+  4 — 3 permanent (rules validator, narration auditor, summarizer, handed
+  out via the unchanged `createChatSession`, never released) plus a
+  `narrativeWorkerSequences`-sized pool (`LlamaCppBackendConfig`,
+  default `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2`) reused across
+  characters via the new `createNarrativeSession`. Since each sequence
+  gets its own full `contextSize`-sized KV cache (not divided), the
+  default raises the backend's reserved memory by ~25% (5 sequences
+  instead of 4).
+
+**The eviction policy lives in `ai/index.ts`, not either driver** — the
+drivers only expose two mechanical primitives: `createNarrativeSession`
+and `ChatDriverSession.release?()` (returns a session's sequence to the
+free list; a no-op on the API backend, which has nothing scarce). A
+`Map<characterId, CharacterSessionState>` tracks whoever's currently
+resident (each with their own session and their own
+`pendingNarrations`/`subblockSummaries`/`blockSummaries` rollup state —
+see Context Efficiency below), bounded to
+`AiSessionOptions.maxResidentNarrativeSessions`. When a character not
+currently resident needs a turn and the pool is full, the
+least-recently-used resident character is evicted:
+1. If it has any unflushed `pendingNarrations`, force one extra
+   `summarizer.summarize(...)` pass immediately (the same call already
+   used for the periodic rollup, just triggered early) so its cold
+   recap is always fully compacted.
+2. `session.compactContext(finalRecap)` collapses its driver-level
+   history down to just that recap (reusing the exact mechanism the
+   periodic rollup already uses).
+3. `session.release?.()` frees its sequence (local backend only), and
+   the recap is stashed in a `coldRecaps` map, keyed by character.
+
+When that character's turn comes around again, a fresh session is
+created via `createNarrativeSession` and immediately seeded with its
+`coldRecaps` entry (if any) via the same `compactContext` call, before
+its real prompt that turn — **this is the concrete cap on reload cost**:
+resuming an evicted character never costs more than "system prompt plus
+one short recap string," regardless of how many turns it sat evicted,
+never the full accumulated history a naive swap would otherwise have to
+replay through the model to rebuild its KV cache.
+
+The already-resident case is checked first, unconditionally, before any
+eviction logic runs — without that explicit fast path, a pool at (or
+above) capacity would evict and reconstruct the *same* character's own
+session every single turn instead of just reusing it. This works
+because turns are already fully serialized end-to-end
+(`scheduler/`'s `armNext()` never re-arms until the current turn's
+`onCharacterActed` fires) — there is never more than one turn in flight,
+so this is a cache-eviction problem, not a concurrent-request-queueing
+one.
+
+**Behavior change worth calling out explicitly**: each character's own
+subblock/block rollup cadence is now based on *that character's own*
+turn count, not a shared global one — a rarely-acting NPC will go many
+real-world turns before its own history is ever compacted. This is the
+intended consequence of giving each character real continuity, not a
+bug.
+
+**What this deliberately doesn't do:** the local backend's sequence
+reuse (`sequence.clearHistory()` + a fresh `LlamaChatSession` wrapper,
+verified against node-llama-cpp's actual implementation — there's no API
+to rebind an existing session to a new conversation in place) couldn't
+be exercised against a real model in this environment; verified via a
+fake driver standing in for the eviction *policy* logic instead (LRU
+selection, forced-flush-on-evict, cold-recap reseed, and the
+same-character-never-evicts-itself fast path), not the driver's own
+KV-cache mechanics. The eviction/reload cost itself also isn't tuned
+against real play — `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2` is a
+first-pass default, same caveat as every other constant introduced this
+way.
+
 ---
 
 ## Beta Implementation

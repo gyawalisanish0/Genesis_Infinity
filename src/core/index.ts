@@ -1,6 +1,7 @@
 import { loadExperience, type LoadedExperience } from "../data/loaders/experience.js";
 import { Dtm } from "../dtm/index.js";
 import { createAiSession, type BackendConfig, type ToolCallRecord, type TurnResult } from "../ai/index.js";
+import { DEFAULT_NARRATIVE_WORKER_SEQUENCES } from "../ai/llamaCppDriver.js";
 import type { ToolContext } from "../tools/index.js";
 import { createTimeline } from "../timeline/index.js";
 
@@ -106,10 +107,18 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
   const timeline = createTimeline();
   const toolCtx: ToolContext = { dtm, world: loaded.world, loaded, timeline };
 
+  // Each character gets its own persistent narrative session (see ai/'s
+  // per-character session pool) - unbounded on an API backend (nothing
+  // scarce to evict), bounded to however many sequences the local backend
+  // actually reserved for this on a llamaCpp backend.
+  const maxResidentNarrativeSessions =
+    options.backend.type === "api" ? Infinity : (options.backend.narrativeWorkerSequences ?? DEFAULT_NARRATIVE_WORKER_SEQUENCES);
+
   const aiSession = await createAiSession({
     backend: options.backend,
     toolCtx,
     systemPrompt: buildSystemPrompt(loaded, options.playerCharacterId),
+    maxResidentNarrativeSessions,
     onToolCall: options.onToolCall,
   });
 
@@ -122,7 +131,7 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
     currentTimelineUnit: () => timeline.currentUnit(),
     async takeTurn(input: string) {
       timestamp += 1;
-      return aiSession.prompt(input, timestamp);
+      return aiSession.prompt(options.playerCharacterId, input, timestamp);
     },
     async runNpcTurn(characterId: string) {
       timestamp += 1;
@@ -131,7 +140,7 @@ export async function createEngine(options: EngineOptions): Promise<Engine> {
         `It is now ${characterName}'s turn to act, with no input from the connected player. ` +
         `Decide and narrate what ${characterName} does this turn, using the available tools ` +
         `(action/say/etc.) with characterId "${characterId}".`;
-      return aiSession.prompt(prompt, timestamp);
+      return aiSession.prompt(characterId, prompt, timestamp);
     },
     async dispose() {
       await aiSession.dispose();
