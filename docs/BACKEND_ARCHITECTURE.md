@@ -1438,8 +1438,9 @@ resolves outcomes and schedules turns**, layered onto the existing
 `timeline/` module (today a pure, lazily-computed function of elapsed real
 time, with "no setInterval, no background process, nothing to dispose" —
 see its own doc comment). Phase 1 (dice-based outcome resolution, closing
-gaps 1 and 2) is built; Phase 2 (timeline-scheduled turns, closing gap 3)
-remains a documented design, not yet built.
+gaps 1 and 2) and Phase 2 (timeline-scheduled turns, closing gap 3) are
+both built; Phase 3 (DC generation for non-combat checks, generalizing
+Phase 1's roll beyond "attack vs. armor class") is also built.
 
 ### Phase 1 (built): dice-based outcome resolution
 
@@ -1582,13 +1583,64 @@ once Venom's autonomous turn completes.
 - How multiple simultaneous NPCs (beyond the single Venom in the test
   fixture) interleave on one shared timeline — not yet exercised against
   more than a two-character fixture.
-- Phase 1 doesn't yet distinguish an offensive targeted `interact` (should
-  roll and potentially deal damage) from a non-combat one that still names
-  a target (e.g. handing a carried item to someone) — any targeted
-  `interact` against a character with an `armorClass` is treated as
-  attack-like today. A future pass could have `rules/` classify offensive
-  intent explicitly rather than inferring it from "has a target with an
-  armor class."
+
+### Phase 3 (built): DC generation for non-combat checks
+
+Phase 1's roll only ever fired when a target had an `armorClass` —
+correct for combat, but it meant *any* targeted `interact` against a
+character (persuading them, handing them an item) was wrongly treated as
+an attack roll against their armor. Phase 3 generalizes the same roll
+mechanism to freeform, non-combat challenges — the other half of D&D's
+own split between an attack roll and a general ability check:
+
+- **`rules/`'s validator now also classifies `checkKind`** — `"combat"`
+  (a hostile action against a character; rolls vs. their `armorClass`,
+  exactly as Phase 1 already did) or `"skill"` (any other attempted
+  challenge with real stakes: persuasion, stealth, climbing, a stuck lock,
+  recalling obscure lore). This is the explicit offensive-intent
+  classification Phase 2's "what this doesn't do" flagged as missing —
+  the engine no longer infers "is this an attack" from "does the target
+  have an armor class."
+- **`"skill"` checks get a DC from `difficultyTier`**, a categorical
+  judgment (`trivial`/`easy`/`medium`/`hard`/`very-hard`/`near-impossible`)
+  mapped by `ai/`'s `difficultyTierToDc` to a fixed number — D&D 5e's own
+  DC table (5/10/15/20/25/30). Same "AI picks a category, the engine
+  computes the number" pattern as `applicableSkillId` and severity — the
+  model never gets to name a raw DC itself.
+- **A `"skill"` check needs no target at all** — `resolveRoll` no longer
+  requires `targetId` when `checkKind` is `"skill"`, so a solo challenge
+  (climbing, lockpicking, a memory check) rolls against the difficulty
+  tier with nobody to target. A `"combat"` check still requires a target
+  with an `armorClass`, exactly as before.
+- **A successful skill check never deals damage** — `ai/`'s action handler
+  only forwards the roll's margin into `applyAction` (and from there,
+  `interact`'s rolled-damage path) when `checkKind === "combat"`; a
+  `"skill"` check's margin decides `outcome` the same way but is never
+  passed through to size damage.
+- Both existing behaviors are otherwise untouched: `checkKind` is omitted
+  entirely (no roll at all) whenever `rules/` judges nothing genuinely at
+  risk, exactly like the existing invalid/neutral judgment; `move` is
+  never rolled; a `use_technique` with no `effectId` is still skipped
+  regardless of `checkKind`.
+
+Verified against the real fixture (mocked model): an untargeted skill
+check overrides a forced `"neutral"` guess to `"valid"` via the roll with
+no damage applied; a targeted skill check (persuading an armored target)
+resolves correctly against the difficulty tier's DC rather than the
+target's armor class, and deals no damage even on success; a combat
+`interact` regression-checks unchanged — still rolls against armor class
+and still applies rolled damage sized from the margin.
+
+### What Phase 3 deliberately doesn't do
+
+- The fixed DC table (5/10/15/20/25/30) is D&D 5e's own, unadjusted for
+  this engine's specific skill-value ranges — untuned against real play,
+  same caveat as Phase 2's roll-to-offset formula.
+- No contested checks (two characters rolling against each other, e.g.
+  Deception vs. Insight) — `checkKind: "skill"` is always a fixed DC, not
+  an opposed roll against another character's own skill.
+- No advantage/disadvantage or situational roll modifiers beyond the
+  named skill's flat value.
 
 ---
 

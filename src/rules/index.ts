@@ -29,14 +29,42 @@ export interface RuleValidation {
   reason: string;
   /**
    * The acting character's skill id (from their own sheet, given in the
-   * prompted state) most relevant to a targeted action — e.g. Athletics
-   * for a punch, Acrobatics for a dodge. Only meaningful when a target is
-   * named; the engine uses it to pick which skill's value becomes the
-   * roll's modifier. Never a magnitude or number itself — the same
-   * "AI picks a category, the engine computes the number" pattern
+   * prompted state) most relevant to the action — e.g. Athletics for a
+   * punch, Persuasion for a bluff, Acrobatics for a climb. Meaningful
+   * whenever `checkKind` is set; the engine uses it to pick which skill's
+   * value becomes the roll's modifier. Never a magnitude or number itself —
+   * the same "AI picks a category, the engine computes the number" pattern
    * EffectDefSchema's severity already uses elsewhere.
    */
   applicableSkillId?: string;
+  /**
+   * Classifies what kind of dice check (if any) this attempt calls for —
+   * the engine's answer to "is this an attack roll vs. armor class, or a
+   * general ability check vs. a judged difficulty?" (D&D's own split
+   * between an attack roll and any other ability check):
+   * "combat" — a hostile action against a character; the engine rolls
+   *   against that character's armor class as DC. Requires a target with
+   *   an armor class — the engine falls back to no roll if there isn't one.
+   * "skill" — any other attempted challenge with real stakes: persuasion,
+   *   stealth, climbing, a lock, recalling obscure lore. Never against
+   *   armor class — the engine rolls against `difficultyTier` instead.
+   *   Doesn't require a target at all (e.g. climbing a cliff).
+   * Omit entirely when the attempt is safe/trivial enough that nothing is
+   * genuinely at risk — the same "some things just happen, no roll needed"
+   * judgment already implicit in the invalid/neutral split. Never set when
+   * `outcome` is "invalid".
+   */
+  checkKind?: "combat" | "skill";
+  /**
+   * How hard a "skill" check is, as a category — never a raw DC number
+   * (see checkKind's doc comment for why: the engine, not the model, turns
+   * this into an actual number). Mirrors D&D 5e's own DC table:
+   * trivial=5, easy=10, medium=15, hard=20, very-hard=25,
+   * near-impossible=30. Only meaningful when `checkKind` is "skill" —
+   * ignored otherwise (a "combat" check's DC is always the target's armor
+   * class).
+   */
+  difficultyTier?: "trivial" | "easy" | "medium" | "hard" | "very-hard" | "near-impossible";
 }
 
 const VALIDATION_SCHEMA: JsonSchema = {
@@ -45,6 +73,8 @@ const VALIDATION_SCHEMA: JsonSchema = {
     outcome: { enum: ["valid", "neutral", "invalid"] },
     reason: { type: "string" },
     applicableSkillId: { type: "string" },
+    checkKind: { enum: ["combat", "skill"] },
+    difficultyTier: { enum: ["trivial", "easy", "medium", "hard", "very-hard", "near-impossible"] },
   },
 };
 
@@ -97,15 +127,39 @@ export class RuleValidator {
         "- Acting from a node the character isn't at, or targeting a " +
         "character who isn't present: invalid.\n" +
         "\n" +
-        "If the action names a target and isn't invalid, also name which " +
-        "one of the acting character's own skills (by id, from their " +
-        "sheet in the given state) is most relevant to the attempt — e.g. " +
-        "Athletics for a physical strike, Acrobatics for a dodge or " +
-        "maneuver. This is a category choice only, never a number: the " +
-        "engine rolls dice using that skill's value itself, and that roll " +
-        "— not your outcome guess — is what actually decides valid vs " +
-        "neutral for a targeted action. Omit this field entirely if no " +
-        "target is named.\n" +
+        "If the attempt isn't invalid and has real stakes (a genuine " +
+        "chance it could fail), also classify it as a checkKind:\n" +
+        '"combat" — a hostile action against a character. The engine ' +
+        "rolls an attack vs. that character's armor class; requires a " +
+        "target who has one.\n" +
+        '"skill" — any other attempted challenge with real stakes: ' +
+        "persuasion, deception, stealth, climbing, forcing a stuck lock, " +
+        "recalling obscure lore. Never against armor class — name a " +
+        "difficultyTier instead (see below). Doesn't require a target at " +
+        "all — a character can attempt a skill check against the " +
+        "environment or their own knowledge.\n" +
+        "Omit checkKind entirely for anything safe or trivial enough that " +
+        "nothing is genuinely at risk — the engine then never rolls, and " +
+        "your own outcome guess stands as-is. Never set checkKind when " +
+        'outcome is "invalid".\n' +
+        "When checkKind is \"skill\", also name a difficultyTier — how " +
+        "hard the attempt is, as a category, never a number (D&D 5e's own " +
+        "DC table): trivial (forcing a jammed door within reach), easy " +
+        "(convincing an already-friendly stranger of something plausible), " +
+        "medium (picking a simple lock, swaying a skeptical guard), hard " +
+        "(scaling a sheer wet cliff, deceiving a trained inquisitor), " +
+        "very-hard (disarming a masterwork trap), near-impossible " +
+        "(recalling a secret almost no one alive still knows).\n" +
+        "Whenever checkKind is set (combat or skill), also name which one " +
+        "of the acting character's own skills (by id, from their sheet in " +
+        "the given state) is most relevant to the attempt — e.g. Athletics " +
+        "for a physical strike or climb, Persuasion for a bluff, " +
+        "Acrobatics for a dodge. This and difficultyTier are category " +
+        "choices only, never numbers: the engine rolls dice using the " +
+        "named skill's value against the resulting DC, and that roll — " +
+        "not your outcome guess — is what actually decides valid vs " +
+        "neutral whenever checkKind is set. Omit applicableSkillId " +
+        "entirely if checkKind is omitted.\n" +
         "Respond only with the validation result.",
     );
   }

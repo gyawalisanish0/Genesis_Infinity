@@ -9,7 +9,7 @@ import {
   applyAction,
   rejectAction,
 } from "../tools/index.js";
-import { RuleValidator } from "../rules/index.js";
+import { RuleValidator, type RuleValidation } from "../rules/index.js";
 import { NarrationAuditor } from "../audit/index.js";
 import { Summarizer } from "../summarizer/index.js";
 import { getState, type StateSnapshot } from "../state/index.js";
@@ -72,28 +72,57 @@ function rollD20(): number {
 }
 
 /**
- * Overrides rules/'s own valid/neutral guess with a real dice roll once a
- * target is named and legal (rules/'s "invalid" gate already ran and
- * passed) — d20 plus the acting character's applicableSkillId value
- * (rules/'s own categorical judgment) against the target's effective
- * armorClass as DC, reusing real sheet/effectiveStats data instead of a
- * new invented difficulty scale (see docs/BACKEND_ARCHITECTURE.md's
- * Dynamic Timeline-Driven Turn Engine). Returns undefined — rules/'s own
- * judgment stands unchanged — when there's no target or the target has no
- * armorClass to roll against; `move` is never rolled, since its Action
- * variant has no targetId at all. Also skipped for a `use_technique` whose
- * TechniqueDef has no `effectId` (e.g. Instant Transmission, a pure
- * `relocatesToTarget` teleport with nothing to resist) — an "attack roll
- * vs armor class" only makes sense for a technique that actually has a
- * mechanical effect to land.
+ * Maps rules/'s categorical difficultyTier to a real DC — D&D 5e's own
+ * table. The model never gets to name a raw number itself (same "AI picks
+ * a category, the engine computes the number" pattern as severity and
+ * applicableSkillId).
+ */
+function difficultyTierToDc(tier: RuleValidation["difficultyTier"]): number {
+  switch (tier) {
+    case "trivial":
+      return 5;
+    case "easy":
+      return 10;
+    case "hard":
+      return 20;
+    case "very-hard":
+      return 25;
+    case "near-impossible":
+      return 30;
+    case "medium":
+    default:
+      return 15;
+  }
+}
+
+/**
+ * Overrides rules/'s own valid/neutral guess with a real dice roll once
+ * rules/ has classified this attempt as a real check (its "invalid" gate
+ * already ran and passed) — d20 plus the acting character's
+ * applicableSkillId value (rules/'s own categorical judgment) against a DC
+ * that depends on checkKind:
+ * - "combat" — the target's effective armorClass, reusing real
+ *   sheet/effectiveStats data. Requires a target with one; returns
+ *   undefined otherwise (rules/'s own judgment stands unchanged).
+ * - "skill" — difficultyTierToDc's fixed table, no target required at all
+ *   (see docs/BACKEND_ARCHITECTURE.md's Dynamic Timeline-Driven Turn
+ *   Engine) — a climb, a bluff, or recalling lore has no armor class to
+ *   roll against.
+ * Returns undefined — rules/'s own judgment stands unchanged — whenever
+ * checkKind is omitted entirely (nothing genuinely at risk); `move` is
+ * never rolled, since its Action variant carries no checkKind-worthy
+ * stakes. Also skipped for a `use_technique` whose TechniqueDef has no
+ * `effectId` (e.g. Instant Transmission, a pure `relocatesToTarget`
+ * teleport with nothing to resist) — a roll only makes sense for a
+ * technique that actually has a mechanical effect to land.
  */
 function resolveRoll(
   ctx: ToolContext,
   state: StateSnapshot,
   action: Action,
-  applicableSkillId: string | undefined,
+  validation: RuleValidation,
 ): { outcome: ActionOutcome; margin: number } | undefined {
-  if (!("targetId" in action) || !action.targetId) {
+  if (action.type === "move" || !validation.checkKind) {
     return undefined;
   }
 
@@ -105,15 +134,24 @@ function resolveRoll(
     }
   }
 
-  const targetArmorClass = state.characters.find((c) => c.sheet.id === action.targetId)?.effectiveStats.armorClass;
-  if (targetArmorClass === undefined) {
-    return undefined;
+  let dc: number;
+  if (validation.checkKind === "combat") {
+    if (!("targetId" in action) || !action.targetId) {
+      return undefined;
+    }
+    const targetArmorClass = state.characters.find((c) => c.sheet.id === action.targetId)?.effectiveStats.armorClass;
+    if (targetArmorClass === undefined) {
+      return undefined;
+    }
+    dc = targetArmorClass;
+  } else {
+    dc = difficultyTierToDc(validation.difficultyTier);
   }
 
   const actorSheet = ctx.loaded.characters.find((c) => c.id === action.characterId);
-  const skillValue = actorSheet?.skills.find((s) => s.id === applicableSkillId)?.value ?? 0;
+  const skillValue = actorSheet?.skills.find((s) => s.id === validation.applicableSkillId)?.value ?? 0;
 
-  const margin = rollD20() + skillValue - targetArmorClass;
+  const margin = rollD20() + skillValue - dc;
   return { outcome: margin >= 0 ? "valid" : "neutral", margin };
 }
 
@@ -482,12 +520,16 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           return record("action", params, result);
         }
 
-        const rolled = resolveRoll(options.toolCtx, state, action, validation.applicableSkillId);
+        const rolled = resolveRoll(options.toolCtx, state, action, validation);
+        // rollMargin only ever sizes interact's rolled damage (see tools/'s
+        // applyRolledDamage) — a "skill" check's margin decides outcome
+        // above but must never itself deal damage.
+        const damageMargin = validation.checkKind === "combat" ? rolled?.margin : undefined;
 
         return record(
           "action",
           params,
-          applyAction(options.toolCtx, action, rolled?.outcome ?? validation.outcome, rolled?.margin),
+          applyAction(options.toolCtx, action, rolled?.outcome ?? validation.outcome, damageMargin),
         );
       },
     },
