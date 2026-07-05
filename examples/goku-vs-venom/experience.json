@@ -1,6 +1,29 @@
 {
   "id": "goku-vs-venom-null-void",
   "name": "Goku vs Venom: Null Void Showdown",
+  "version": "1.0.0",
+  "description": "A cross-universe duel in Ben 10's Null Void: Son Goku versus Venom on a drifting battlefield of wreckage and unstable gravity.",
+  "author": "Genesis Infinity",
+  "mode": "single-player",
+  "playerCharacterId": "goku",
+  "plotPoints": [
+    {
+      "id": "shard-collapse",
+      "name": "The Shard Collapses",
+      "description": "The Suspended Shard's gravity anomaly finally gives out - the moon fragment starts breaking apart, showering the battlefield with debris.",
+      "authoring": "soft-coded",
+      "firing": "timestamp-based",
+      "atUnit": 600
+    },
+    {
+      "id": "symbiote-frenzy",
+      "name": "Symbiote Frenzy",
+      "description": "If Venom's hit points ever fall below half, the symbiote panics and takes full control, fighting with feral abandon.",
+      "authoring": "soft-coded",
+      "firing": "trigger-based",
+      "trigger": "Venom's current hit points fall below half of maximum"
+    }
+  ],
   "effects": [
     {
       "id": "disoriented",
@@ -42,7 +65,13 @@
     }
   ],
   "characters": [
-    { "characterId": "goku", "startingNodeId": "battlefield-core" },
-    { "characterId": "venom", "startingNodeId": "drifting-wreckage" }
+    {
+      "characterId": "goku",
+      "startingNodeId": "battlefield-core"
+    },
+    {
+      "characterId": "venom",
+      "startingNodeId": "drifting-wreckage"
+    }
   ]
 }

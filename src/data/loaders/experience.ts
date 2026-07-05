@@ -7,6 +7,7 @@ import {
   type Experience,
   type EscalationConfig,
   type DifficultyConfig,
+  type ExperienceMode,
 } from "../schemas/experience.js";
 import { WorldSchema, type World } from "../schemas/world.js";
 import { CharacterSheetSchema, type CharacterSheet } from "../schemas/character.js";
@@ -18,6 +19,8 @@ export interface LoadedExperience {
   ruleset: { abilities: AbilityDef[]; skills: SkillDef[]; effects: EffectDef[]; items: ItemDef[] };
   escalation: Required<EscalationConfig>;
   difficulty: Required<DifficultyConfig>;
+  /** Resolved single-player/multiplayer mode — defaults to "single-player" when the Experience doesn't declare one. Schema-only today (see ExperienceModeSchema). */
+  mode: ExperienceMode;
   world: World;
   characters: CharacterSheet[];
 }
@@ -73,6 +76,7 @@ export async function loadExperience(dir: string): Promise<LoadedExperience> {
   const ruleset = resolveRulesetDefs(experience);
   const escalation = resolveEscalationConfig(experience.escalation);
   const difficulty = resolveDifficultyConfig(experience.difficulty);
+  const mode = experience.mode ?? "single-player";
 
-  return { experience, ruleset, escalation, difficulty, world, characters };
+  return { experience, ruleset, escalation, difficulty, mode, world, characters };
 }

@@ -85,6 +85,23 @@ body {
   gap: 8px;
 }
 
+/* The experience name doubles as the Experiences-dialog opener — styled
+   as plain title text (inheriting .topbar-title's weight) rather than a
+   button chrome, with only a hover cue that it's clickable. */
+.experience-name-btn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.experience-name-btn:hover {
+  text-decoration: underline;
+}
+
 .model-status-btn {
   display: flex;
   align-items: center;

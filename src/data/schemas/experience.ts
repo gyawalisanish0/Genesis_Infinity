@@ -58,24 +58,98 @@ export const DEFAULT_DIFFICULTY_CONFIG: Required<DifficultyConfig> = {
 };
 
 /**
- * Minimal Experience schema, scoped for now to the ability/skill/effect/item
- * ruleset declaration, escalation tuning, and character starting placement
- * — all optional, with abilities/skills/effects/items falling back to the
- * defaults (DEFAULT_ABILITIES / DEFAULT_SKILLS / DEFAULT_EFFECTS /
- * DEFAULT_ITEMS) via the resolver in data/loaders/character.ts, and
- * escalation falling back to DEFAULT_ESCALATION_CONFIG per-field in
- * data/loaders/experience.ts. The full Experience model (rulesets beyond
- * these, etc.) is deferred — see docs/BACKEND_ARCHITECTURE.md.
+ * Single-player vs. multiplayer, as an Experience config field — not a
+ * separate engine codepath (docs/BACKEND_ARCHITECTURE.md's Experience
+ * Model). Schema-only today: the engine still runs exactly one connected
+ * user per process; multi-user session routing remains deferred.
  */
-export const ExperienceSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  abilities: z.array(AbilityDefSchema).optional(),
-  skills: z.array(SkillDefSchema).optional(),
-  effects: z.array(EffectDefSchema).optional(),
-  items: z.array(ItemDefSchema).optional(),
-  escalation: EscalationConfigSchema.optional(),
-  difficulty: DifficultyConfigSchema.optional(),
-  characters: z.array(CharacterPlacementSchema).optional(),
-});
+export const ExperienceModeSchema = z.enum(["single-player", "multiplayer"]);
+export type ExperienceMode = z.infer<typeof ExperienceModeSchema>;
+
+/**
+ * An Experience-level narrative plot point, along the two independent axes
+ * docs/BACKEND_ARCHITECTURE.md's Narrative / Plot Points section defines:
+ * - `authoring`: "hardcoded" (fixed, deterministic) or "soft-coded" (the
+ *   AI has interpretive freedom within the description's bounds).
+ * - `firing`: "trigger-based" (fires on a condition — `trigger`, a
+ *   free-text condition description, required) or "timestamp-based"
+ *   (fires at a timeline/ unit — `atUnit`, required).
+ * Any pairing of the two axes is valid. Schema-only today: plot points
+ * are validated, loaded, and available on LoadedExperience, but no engine
+ * firing mechanism exists yet — trigger/timestamp firing is its own
+ * deferred design (likely tied to scheduler/).
+ */
+export const PlotPointSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string(),
+    authoring: z.enum(["hardcoded", "soft-coded"]),
+    firing: z.enum(["trigger-based", "timestamp-based"]),
+    trigger: z.string().optional(),
+    atUnit: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((point, ctx) => {
+    if (point.firing === "trigger-based" && point.trigger === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Plot point "${point.id}" is trigger-based but declares no trigger`,
+        path: ["trigger"],
+      });
+    }
+    if (point.firing === "timestamp-based" && point.atUnit === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Plot point "${point.id}" is timestamp-based but declares no atUnit`,
+        path: ["atUnit"],
+      });
+    }
+  });
+export type PlotPoint = z.infer<typeof PlotPointSchema>;
+
+/**
+ * The Experience schema — the manifest of a playable package. The
+ * package-manifest fields (`version`/`description`/`author`) live directly
+ * on the Experience rather than in a separate manifest file, so a package
+ * has exactly one source of identity (no second file whose `id` could
+ * disagree — see src/packages/index.ts's discovery, which reads these
+ * straight off experience.json). Ruleset declarations
+ * (abilities/skills/effects/items), escalation and difficulty tuning, and
+ * character starting placement are all optional, falling back to engine
+ * defaults via data/loaders/. `playerCharacterId` optionally names which
+ * character the connected player controls by default when this Experience
+ * is selected at runtime (see server/'s resolvePlayerCharacterId fallback
+ * chain); `mode` and `plotPoints` are schema-only today (see their own
+ * doc comments above).
+ */
+export const ExperienceSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    version: z.string().optional(),
+    description: z.string().optional(),
+    author: z.string().optional(),
+    mode: ExperienceModeSchema.optional(),
+    playerCharacterId: z.string().optional(),
+    abilities: z.array(AbilityDefSchema).optional(),
+    skills: z.array(SkillDefSchema).optional(),
+    effects: z.array(EffectDefSchema).optional(),
+    items: z.array(ItemDefSchema).optional(),
+    escalation: EscalationConfigSchema.optional(),
+    difficulty: DifficultyConfigSchema.optional(),
+    characters: z.array(CharacterPlacementSchema).optional(),
+    plotPoints: z.array(PlotPointSchema).optional(),
+  })
+  .superRefine((experience, ctx) => {
+    const plotPointIds = new Set<string>();
+    for (const point of experience.plotPoints ?? []) {
+      if (plotPointIds.has(point.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate plot point id "${point.id}"`,
+        });
+      }
+      plotPointIds.add(point.id);
+    }
+  });
 export type Experience = z.infer<typeof ExperienceSchema>;

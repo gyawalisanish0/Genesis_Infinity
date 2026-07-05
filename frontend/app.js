@@ -4,6 +4,14 @@ const PROFILES_KEY = "genesis-infinity-model-profiles";
 const el = {
   statusDot: document.getElementById("status-dot"),
   experienceName: document.getElementById("experience-name"),
+  experienceBtn: document.getElementById("experience-btn"),
+  experienceDialog: document.getElementById("experience-dialog"),
+  experienceDialogStatus: document.getElementById("experience-dialog-status"),
+  experienceDialogClose: document.getElementById("experience-dialog-close"),
+  experienceList: document.getElementById("experience-list"),
+  experienceImportForm: document.getElementById("experience-import-form"),
+  experienceZipInput: document.getElementById("experience-zip-input"),
+  experienceImportBtn: document.getElementById("experience-import-btn"),
   messages: document.getElementById("messages"),
   composer: document.getElementById("composer"),
   input: document.getElementById("input"),
@@ -581,6 +589,92 @@ function openModelDialog() {
   el.modelDialog.showModal();
 }
 
+// --- Experience packages (see docs/BACKEND_ARCHITECTURE.md's Experience
+// Packages section): list installed packages, switch at runtime, import a
+// .zip. Mirrors the model dialog's saved-profiles list pattern.
+
+async function refreshExperiences() {
+  try {
+    const data = await apiFetch("/api/experiences");
+    renderExperiences(data);
+  } catch (error) {
+    el.experienceList.innerHTML = `<li class="empty">${error.message}</li>`;
+  }
+}
+
+function renderExperiences(data) {
+  el.experienceList.innerHTML = "";
+  if (data.packages.length === 0) {
+    el.experienceList.innerHTML = '<li class="empty">No packages installed.</li>';
+    return;
+  }
+  for (const pkg of data.packages) {
+    const li = document.createElement("li");
+    if (pkg.id === data.current.id) li.classList.add("selected");
+
+    const label = document.createElement("span");
+    label.className = "profile-label";
+    const name = document.createElement("span");
+    name.textContent = pkg.name + (pkg.version ? ` (v${pkg.version})` : "");
+    label.append(name);
+    if (pkg.description) {
+      const desc = document.createElement("span");
+      desc.className = "muted small";
+      desc.textContent = pkg.description;
+      label.append(desc);
+    }
+
+    li.append(label);
+    li.addEventListener("click", () => {
+      if (pkg.id !== data.current.id) selectExperience(pkg.id, pkg.name);
+    });
+    el.experienceList.appendChild(li);
+  }
+}
+
+async function selectExperience(id, name) {
+  el.experienceDialogStatus.textContent = `Switching to "${name}"...`;
+  try {
+    const result = await apiFetch("/api/experiences/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    el.experienceName.textContent = result.current.name;
+    el.experienceDialogStatus.textContent = " ";
+    el.experienceDialog.close();
+    // A different Experience is a different world - the old transcript
+    // and sidebar no longer describe anything real. The composer stays
+    // gated on the rebuilt scheduler's next your_turn (or on a model
+    // being loaded at all, if the server was idle).
+    el.messages.innerHTML = "";
+    hasTurn = false;
+    updateComposerEnabled();
+    addMessage(`Switched to "${result.current.name}".`, "system");
+  } catch (error) {
+    el.experienceDialogStatus.textContent = error.message;
+  }
+}
+
+async function importExperienceZip(file) {
+  el.experienceImportBtn.disabled = true;
+  el.experienceDialogStatus.textContent = `Importing "${file.name}"...`;
+  try {
+    const imported = await apiFetch("/api/experiences/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: file,
+    });
+    el.experienceDialogStatus.textContent = `Imported "${imported.name}".`;
+    el.experienceZipInput.value = "";
+    await refreshExperiences();
+  } catch (error) {
+    el.experienceDialogStatus.textContent = error.message;
+  } finally {
+    el.experienceImportBtn.disabled = false;
+  }
+}
+
 function switchBackendTab(backend) {
   el.tabLocal.classList.toggle("active", backend === "llamaCpp");
   el.tabApi.classList.toggle("active", backend === "api");
@@ -729,6 +823,22 @@ async function unloadModel() {
 
 el.modelBtn.addEventListener("click", openModelDialog);
 el.modelDialogClose.addEventListener("click", () => el.modelDialog.close());
+
+el.experienceBtn.addEventListener("click", () => {
+  if (!connection) return;
+  refreshExperiences();
+  el.experienceDialog.showModal();
+});
+el.experienceDialogClose.addEventListener("click", () => el.experienceDialog.close());
+el.experienceImportForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const file = el.experienceZipInput.files?.[0];
+  if (!file) {
+    el.experienceDialogStatus.textContent = "Pick a .zip file first.";
+    return;
+  }
+  importExperienceZip(file);
+});
 el.tabLocal.addEventListener("click", () => switchBackendTab("llamaCpp"));
 el.tabApi.addEventListener("click", () => switchBackendTab("api"));
 el.modelApiProvider.addEventListener("change", () => loadApiModelsForProvider(el.modelApiProvider.value));

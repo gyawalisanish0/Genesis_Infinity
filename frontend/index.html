@@ -11,7 +11,9 @@
     <header class="topbar">
       <div class="topbar-title">
         <span class="dot" id="status-dot"></span>
-        <span id="experience-name">Genesis Infinity</span>
+        <button id="experience-btn" class="experience-name-btn" title="Experiences">
+          <span id="experience-name">Genesis Infinity</span>
+        </button>
       </div>
       <div class="topbar-actions">
         <button id="model-btn" class="model-status-btn" title="Model settings">
@@ -90,6 +92,27 @@
         <button type="submit">Connect</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="experience-dialog">
+    <h2>Experiences</h2>
+    <p class="muted small" id="experience-dialog-status">&nbsp;</p>
+
+    <h3>Installed</h3>
+    <ul id="experience-list" class="plain-list selectable"></ul>
+
+    <h3>Import a package</h3>
+    <p class="muted small">A .zip containing experience.json, world.json, and characters/.</p>
+    <form id="experience-import-form">
+      <input id="experience-zip-input" type="file" accept=".zip,application/zip" />
+      <div class="dialog-actions">
+        <button type="submit" id="experience-import-btn">Import</button>
+      </div>
+    </form>
+
+    <div class="dialog-actions">
+      <button type="button" id="experience-dialog-close">Close</button>
+    </div>
   </dialog>
 
   <dialog id="model-dialog">
