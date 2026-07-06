@@ -485,7 +485,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         type: "object",
         properties: { limit: { type: "number" } },
       },
-      handler: (params) => record("get_recent_dtm", params, getRecentDtmTool(options.toolCtx, params as { limit: number })),
+      handler: (params) => record("get_recent_dtm", params, getRecentDtmTool(options.toolCtx, params as { limit?: number })),
     },
     {
       name: "say",
