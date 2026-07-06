@@ -119,6 +119,14 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
         scope: getScope(),
       });
     } catch (error) {
+      // Always logged - an NPC turn runs with no request in flight to
+      // return an error to, so the broadcast below (silently dropped if no
+      // client happens to be connected right now) is not a reliable way to
+      // ever learn a crash happened. A deployed Space's container logs are
+      // the one place this is guaranteed to surface.
+      console.error(
+        `[error] NPC turn for "${characterId}" crashed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+      );
       broadcast("error", { characterId, error: error instanceof Error ? error.message : String(error) });
     }
     onCharacterActed(characterId);

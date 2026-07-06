@@ -676,6 +676,13 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           // and waiting - see scheduler/'s own doc comment on tie-breaking).
           scheduler?.onCharacterActed(current.playerCharacterId);
         } catch (error) {
+          // Always logged (not gated behind options.debug) - a crashed turn
+          // is exactly the kind of thing that must show up in a deployed
+          // Space's container logs, the only visibility a live player's
+          // session otherwise has, unlike the frontend's own error bubble
+          // which is far more likely to be missed or already gone by the
+          // time anyone looks.
+          console.error(`[error] turn crashed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
           sendEvent("error", { error: error instanceof Error ? error.message : String(error) });
         } finally {
           activeTurnListener = null;
@@ -687,6 +694,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Not found" }));
     } catch (error) {
+      console.error(`[error] request to ${req.method} ${url.pathname} crashed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
