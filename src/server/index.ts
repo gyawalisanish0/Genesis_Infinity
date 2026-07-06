@@ -6,7 +6,7 @@ import { getState } from "../state/index.js";
 import { getScope } from "../scope/index.js";
 import type { BackendConfig, ToolCallRecord } from "../ai/index.js";
 import { createScheduler, type Scheduler } from "../scheduler/index.js";
-import { discoverPackages, importPackageZip } from "../packages/index.js";
+import { discoverPackages, importPackageZip, createCustomCharacter, type CreateCharacterInput } from "../packages/index.js";
 import { searchGgufModels, listGgufFiles, downloadGgufModel } from "./modelCatalogue.js";
 import { KNOWN_API_PROVIDERS, isKnownApiProvider, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
 import { listApiModels } from "./apiModelCatalogue.js";
@@ -252,6 +252,30 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
   }
 
   /**
+   * Reassigns the mutable `current` Experience/player-character slot from
+   * a freshly loaded package, then — if a model is already loaded —
+   * rebuilds the Engine against it with the same backend (fire-and-forget,
+   * same status-polling contract as POST /api/backend). Shared by
+   * POST /api/experiences/select and POST /api/experiences/:id/characters:
+   * both need this exact "make this the active Experience/player" step,
+   * but the create-character route always calls it unconditionally,
+   * never short-circuited by an id match the way select's is — a newly
+   * written character file requires the fresh `loaded` this always takes.
+   */
+  function applyCurrentExperience(loaded: LoadedExperience, dir: string, playerCharacterId: string): void {
+    current = {
+      id: loaded.experience.id,
+      name: loaded.experience.name,
+      dir,
+      dbPath: join(dir, "dtm.sqlite"),
+      playerCharacterId,
+    };
+    if (engine && status.status === "ready" && lastBackend) {
+      void setBackend(lastBackend.backend, lastBackend.readyStatus);
+    }
+  }
+
+  /**
    * Disposes the current Engine (freeing the loaded model's RAM) and
    * returns to idle, without touching anything on disk — a previously
    * downloaded GGUF stays cached in modelsDir so reloading the same
@@ -346,22 +370,58 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           return;
         }
         const loaded = await loadExperience(target.dir);
-        current = {
-          id: loaded.experience.id,
-          name: loaded.experience.name,
-          dir: target.dir,
-          dbPath: join(target.dir, "dtm.sqlite"),
-          playerCharacterId: resolvePlayerCharacterId(loaded, options.characterId),
-        };
-        // If a model is currently loaded, rebuild the Engine against the
-        // new Experience with the same backend (fire-and-forget, the same
-        // status-polling contract as POST /api/backend); if idle, the next
-        // POST /api/backend will pick up the new Experience naturally.
-        if (engine && status.status === "ready" && lastBackend) {
-          void setBackend(lastBackend.backend, lastBackend.readyStatus);
-        }
+        applyCurrentExperience(loaded, target.dir, resolvePlayerCharacterId(loaded, options.characterId));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ current: { id: current.id, name: current.name }, status }));
+        return;
+      }
+
+      const createCharacterMatch = url.pathname.match(/^\/api\/experiences\/([^/]+)\/characters$/);
+      if (req.method === "POST" && createCharacterMatch) {
+        // Same in-flight guard as select/backend: this also rebuilds the Engine.
+        if (status.status === "downloading" || status.status === "starting") {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "A model switch is already in progress" }));
+          return;
+        }
+        const targetId = decodeURIComponent(createCharacterMatch[1]!);
+        const body = (await readJsonBody(req)) as Record<string, unknown>;
+        if (typeof body.name !== "string" || body.name.trim() === "") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Request body must include a non-empty { name: string }" }));
+          return;
+        }
+        const packages = await discoverPackages(experienceRoots);
+        const target = packages.find((p) => p.id === targetId);
+        if (!target) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `No installed Experience with id "${targetId}"` }));
+          return;
+        }
+        const asRecord = (value: unknown): Record<string, number> | undefined =>
+          value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, number>) : undefined;
+        const asString = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+        const input: CreateCharacterInput = {
+          name: body.name,
+          class: asString(body.class),
+          race: asString(body.race),
+          background: asString(body.background),
+          personality: asString(body.personality),
+          tone: asString(body.tone),
+          abilities: asRecord(body.abilities),
+          skills: asRecord(body.skills),
+        };
+        try {
+          const targetLoaded = await loadExperience(target.dir);
+          const created = await createCustomCharacter(target.dir, targetLoaded, input);
+          const reloaded = await loadExperience(target.dir);
+          applyCurrentExperience(reloaded, target.dir, created.id);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ current: { id: current.id, name: current.name }, character: created, status }));
+        } catch (error) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
         return;
       }
 

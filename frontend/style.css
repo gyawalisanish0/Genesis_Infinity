@@ -455,6 +455,30 @@ body {
   color: var(--status-critical);
 }
 
+.profile-add {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 1em;
+  line-height: 1;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+}
+
+.profile-add:hover {
+  color: var(--status-good);
+  border-color: var(--status-good);
+}
+
+#cc-ability-points.over-budget,
+#cc-skill-points.over-budget {
+  color: var(--status-critical);
+}
+
 dialog {
   background: var(--surface);
   color: var(--text-primary);

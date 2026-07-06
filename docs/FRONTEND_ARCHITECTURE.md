@@ -132,6 +132,24 @@ The topbar's Experience name doubles as a button opening the Experiences
   success. Errors surface in the dialog's own status line, same
   convention as the model dialog.
 
+A package row whose `customCharacter` is present (see
+`docs/BACKEND_ARCHITECTURE.md`'s Experience Packages) also gets a small
+"+" button (`.profile-add`) opening the **create-character dialog**
+(`#create-character-dialog`) — a name field plus one number input per
+ability/skill the Experience's ruleset declares (`buildAllocationList`),
+each defaulting to that pool's `floor`. A running "N / pool points
+spent" readout per pool (`pointBuySpent`) turns red (`.over-budget`) and
+disables Submit the moment an allocation exceeds `abilityPointBuy.pool`
+or `skillPointBuy.pool` — purely a responsive UI; the server
+re-validates every allocation authoritatively regardless (see
+`resolvePointBuyAllocation`), so the client-side check is advisory, not
+a substitute. Submitting posts to
+`POST /api/experiences/:id/characters`, then runs the exact same
+post-switch UI update as selecting an existing package
+(`onExperienceSwitched` — chat log cleared, topbar name updated,
+`hasTurn` reset), shared between both flows since creating a character
+also always makes it the active Experience/player.
+
 ## Model settings dialog
 
 A separate "Model settings" `<dialog>`, opened from a topbar status

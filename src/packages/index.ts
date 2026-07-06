@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, normalize, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import yauzl from "yauzl";
-import { loadExperience } from "../data/loaders/experience.js";
-import type { ExperienceMode } from "../data/schemas/experience.js";
+import { loadExperience, type LoadedExperience } from "../data/loaders/experience.js";
+import type { ExperienceMode, PointBuy } from "../data/schemas/experience.js";
+import { CharacterSheetSchema, type CharacterSheet } from "../data/schemas/character.js";
 
 /**
  * A discovered, fully-valid Experience package — the listing shape
@@ -23,6 +24,41 @@ export interface PackageInfo {
   mode: ExperienceMode;
   /** Absolute-or-relative directory the package loads from (loadExperience's dir). */
   dir: string;
+  /**
+   * Present iff this Experience opts into player-built characters (see
+   * ExperienceSchema's customCharacter field and createCustomCharacter
+   * below) — enough for a client to render a point-buy form with no
+   * second request: the two pools, plus the id/name of every ability and
+   * skill in this Experience's own resolved ruleset (the allocation
+   * target, not the pool's own bounds).
+   */
+  customCharacter?: {
+    abilityPointBuy: PointBuy;
+    skillPointBuy: PointBuy;
+    abilities: { id: string; name: string }[];
+    skills: { id: string; name: string }[];
+  };
+}
+
+/** Builds a PackageInfo from an already-loaded Experience — the shared tail of discoverPackages and importPackageZip. */
+function toPackageInfo(loaded: LoadedExperience, dir: string): PackageInfo {
+  return {
+    id: loaded.experience.id,
+    name: loaded.experience.name,
+    version: loaded.experience.version,
+    description: loaded.experience.description,
+    author: loaded.experience.author,
+    mode: loaded.mode,
+    dir,
+    customCharacter: loaded.experience.customCharacter
+      ? {
+          abilityPointBuy: loaded.experience.customCharacter.abilityPointBuy,
+          skillPointBuy: loaded.experience.customCharacter.skillPointBuy,
+          abilities: loaded.ruleset.abilities.map((a) => ({ id: a.id, name: a.name })),
+          skills: loaded.ruleset.skills.map((s) => ({ id: s.id, name: s.name })),
+        }
+      : undefined,
+  };
 }
 
 /**
@@ -63,15 +99,7 @@ export async function discoverPackages(rootDirs: string[]): Promise<PackageInfo[
         const loaded = await loadExperience(dir);
         if (seenIds.has(loaded.experience.id)) continue;
         seenIds.add(loaded.experience.id);
-        packages.push({
-          id: loaded.experience.id,
-          name: loaded.experience.name,
-          version: loaded.experience.version,
-          description: loaded.experience.description,
-          author: loaded.experience.author,
-          mode: loaded.mode,
-          dir,
-        });
+        packages.push(toPackageInfo(loaded, dir));
       } catch {
         continue; // not a valid package: skipped, never fails the listing
       }
@@ -214,16 +242,135 @@ export async function importPackageZip(zipBuffer: Buffer, destRoot: string): Pro
     await mkdir(destRoot, { recursive: true });
     await rename(packageRoot, destDir);
 
-    return {
-      id: loaded.experience.id,
-      name: loaded.experience.name,
-      version: loaded.experience.version,
-      description: loaded.experience.description,
-      author: loaded.experience.author,
-      mode: loaded.mode,
-      dir: destDir,
-    };
+    return toPackageInfo(loaded, destDir);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+/** Fields a player supplies to build a custom character; `abilities`/`skills` are id -> allocated-value maps, unsupplied ids default to the pool's floor. */
+export interface CreateCharacterInput {
+  name: string;
+  class?: string;
+  race?: string;
+  background?: string;
+  personality?: string;
+  tone?: string;
+  abilities?: Record<string, number>;
+  skills?: Record<string, number>;
+}
+
+/**
+ * Resolves a player's point-buy allocation against one pool and one
+ * ruleset definition list (abilities or skills): every declared id not
+ * present in `allocated` defaults to `pointBuy.floor`; every present
+ * value must fall within `[floor, cap]`; the total spent above floor
+ * across every id must not exceed `pointBuy.pool`. Throws on the first
+ * violation found — this is the authoritative (server-side) check, a
+ * client-side estimate is only ever advisory.
+ */
+function resolvePointBuyAllocation(
+  pointBuy: PointBuy,
+  defs: { id: string }[],
+  allocated: Record<string, number> | undefined,
+  kind: "ability" | "skill",
+): Map<string, number> {
+  const defIds = new Set(defs.map((def) => def.id));
+  for (const id of Object.keys(allocated ?? {})) {
+    if (!defIds.has(id)) {
+      throw new Error(`Unknown ${kind} id "${id}"`);
+    }
+  }
+
+  const resolved = new Map<string, number>();
+  let spent = 0;
+  for (const def of defs) {
+    const value = allocated?.[def.id] ?? pointBuy.floor;
+    if (value < pointBuy.floor || value > pointBuy.cap) {
+      throw new Error(`${kind} "${def.id}" must be between ${pointBuy.floor} and ${pointBuy.cap} (got ${value})`);
+    }
+    spent += value - pointBuy.floor;
+    resolved.set(def.id, value);
+  }
+  if (spent > pointBuy.pool) {
+    throw new Error(`${kind} allocation spends ${spent} points, but only ${pointBuy.pool} are available`);
+  }
+  return resolved;
+}
+
+/** Turns a player-chosen name into a filesystem/dtm-safe character id, de-duplicated against ids already in this package. */
+function generateCharacterId(name: string, existingIds: Set<string>): string {
+  const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "character";
+  if (!existingIds.has(base)) return base;
+  let suffix = 2;
+  while (existingIds.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
+/**
+ * Builds and persists a player-authored character for an Experience that
+ * opts in via `customCharacter` (ExperienceSchema) — the only path
+ * abilities/skills take is point-buy against this Experience's own
+ * resolved ruleset (loaded.ruleset.abilities/skills), never free-form
+ * values. Writes two files: the new `characters/<id>.json` sheet, and an
+ * appended `{characterId, startingNodeId}` entry in `experience.json`'s
+ * own `characters` placement array — required because state/'s getState
+ * throws for any loaded character sheet missing a placement entry, so a
+ * sheet without one would break every subsequent turn/scope read for
+ * this Experience, not just fail to load.
+ *
+ * `experience.json` is read and rewritten as raw JSON, not as the
+ * Zod-parsed `Experience` object, so any field this schema doesn't know
+ * about is preserved rather than silently dropped on rewrite.
+ */
+export async function createCustomCharacter(
+  packageDir: string,
+  loaded: LoadedExperience,
+  input: CreateCharacterInput,
+): Promise<{ id: string; name: string }> {
+  const config = loaded.experience.customCharacter;
+  if (!config) {
+    throw new Error(`Experience "${loaded.experience.id}" does not allow custom characters`);
+  }
+  if (input.name.trim() === "") {
+    throw new Error("A custom character needs a name");
+  }
+
+  const abilityValues = resolvePointBuyAllocation(config.abilityPointBuy, loaded.ruleset.abilities, input.abilities, "ability");
+  const skillValues = resolvePointBuyAllocation(config.skillPointBuy, loaded.ruleset.skills, input.skills, "skill");
+
+  const id = generateCharacterId(input.name, new Set(loaded.characters.map((c) => c.id)));
+  const sheet: CharacterSheet = CharacterSheetSchema.parse({
+    id,
+    name: input.name.trim(),
+    class: input.class,
+    race: input.race,
+    background: input.background,
+    personality: input.personality,
+    tone: input.tone,
+    abilities: loaded.ruleset.abilities.map((def) => ({
+      id: def.id,
+      name: def.name,
+      score: abilityValues.get(def.id)!,
+    })),
+    skills: loaded.ruleset.skills.map((def) => ({
+      id: def.id,
+      name: def.name,
+      governingAbilityId: def.governingAbilityId,
+      value: skillValues.get(def.id)!,
+    })),
+    techniques: [],
+    inventory: [],
+    hitPoints: { current: config.hitPoints.max, max: config.hitPoints.max },
+    armorClass: config.armorClass,
+  });
+
+  await writeFile(join(packageDir, "characters", `${id}.json`), JSON.stringify(sheet, null, 2));
+
+  const experienceJsonPath = join(packageDir, "experience.json");
+  const rawExperience = JSON.parse(await readFile(experienceJsonPath, "utf-8")) as { characters?: unknown[] };
+  rawExperience.characters = [...(rawExperience.characters ?? []), { characterId: id, startingNodeId: config.startingNodeId }];
+  await writeFile(experienceJsonPath, JSON.stringify(rawExperience, null, 2));
+
+  return { id, name: sheet.name };
 }

@@ -73,5 +73,12 @@
       "characterId": "venom",
       "startingNodeId": "drifting-wreckage"
     }
-  ]
+  ],
+  "customCharacter": {
+    "startingNodeId": "suspended-shard",
+    "hitPoints": { "max": 140 },
+    "armorClass": 15,
+    "abilityPointBuy": { "floor": 8, "cap": 15, "pool": 27 },
+    "skillPointBuy": { "floor": 0, "cap": 5, "pool": 15 }
+  }
 }

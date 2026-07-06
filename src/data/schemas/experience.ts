@@ -108,6 +108,43 @@ export const PlotPointSchema = z
 export type PlotPoint = z.infer<typeof PlotPointSchema>;
 
 /**
+ * A point-buy pool for custom-character creation (see
+ * CustomCharacterConfigSchema below): every ability/skill starts at
+ * `floor`, a player may raise any of them up to `cap`, and the sum of
+ * `(allocated - floor)` across all of them must not exceed `pool`.
+ */
+export const PointBuySchema = z.object({
+  floor: z.number().int(),
+  cap: z.number().int(),
+  pool: z.number().int().nonnegative(),
+});
+export type PointBuy = z.infer<typeof PointBuySchema>;
+
+/**
+ * Opt-in config letting a player build their own character for this
+ * Experience instead of playing one of its pre-authored ones (see
+ * src/packages/index.ts's createCustomCharacter, and
+ * docs/BACKEND_ARCHITECTURE.md's Experience Packages section). Presence
+ * of this field is the opt-in itself — there's no default/fallback
+ * object the way there is for EscalationConfig/DifficultyConfig, since
+ * an Experience that doesn't declare this simply doesn't offer custom
+ * characters at all. `startingNodeId`/`hitPoints`/`armorClass` are fixed
+ * by the author for every custom character in this Experience — only
+ * ability/skill allocation is left to the player, via the two point-buy
+ * pools (validated against this Experience's own resolved
+ * ruleset.abilities/ruleset.skills, not against the pool's own bounds
+ * alone).
+ */
+export const CustomCharacterConfigSchema = z.object({
+  startingNodeId: z.string(),
+  hitPoints: z.object({ max: z.number().int().positive() }),
+  armorClass: z.number(),
+  abilityPointBuy: PointBuySchema,
+  skillPointBuy: PointBuySchema,
+});
+export type CustomCharacterConfig = z.infer<typeof CustomCharacterConfigSchema>;
+
+/**
  * The Experience schema — the manifest of a playable package. The
  * package-manifest fields (`version`/`description`/`author`) live directly
  * on the Experience rather than in a separate manifest file, so a package
@@ -120,7 +157,8 @@ export type PlotPoint = z.infer<typeof PlotPointSchema>;
  * character the connected player controls by default when this Experience
  * is selected at runtime (see server/'s resolvePlayerCharacterId fallback
  * chain); `mode` and `plotPoints` are schema-only today (see their own
- * doc comments above).
+ * doc comments above). `customCharacter`, if declared, opts this
+ * Experience into player-built characters (see CustomCharacterConfigSchema).
  */
 export const ExperienceSchema = z
   .object({
@@ -139,6 +177,7 @@ export const ExperienceSchema = z
     difficulty: DifficultyConfigSchema.optional(),
     characters: z.array(CharacterPlacementSchema).optional(),
     plotPoints: z.array(PlotPointSchema).optional(),
+    customCharacter: CustomCharacterConfigSchema.optional(),
   })
   .superRefine((experience, ctx) => {
     const plotPointIds = new Set<string>();

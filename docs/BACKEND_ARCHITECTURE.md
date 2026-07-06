@@ -328,6 +328,41 @@ silently overwriting. The frontend's Experiences dialog (opened from
 the topbar Experience name) lists/switches packages and uploads a .zip —
 see docs/FRONTEND_ARCHITECTURE.md.
 
+**Custom character creation** (`POST /api/experiences/:id/characters`,
+opt-in per package): a package declares `customCharacter`
+(`CustomCharacterConfigSchema`, `src/data/schemas/experience.ts`) to let
+the player build a character instead of only ever playing one of the
+pre-authored ones. The config fixes `startingNodeId`, `hitPoints.max`,
+and `armorClass` for every custom character in that Experience — the
+player's only input is a name plus point-buy allocation across two
+pools (`abilityPointBuy`/`skillPointBuy`, each `{floor, cap, pool}`):
+every ability/skill in this Experience's own resolved
+`ruleset.abilities`/`ruleset.skills` starts at `floor`, may be raised to
+at most `cap`, and the sum spent above floor across all of them may not
+exceed `pool`. Validated server-side only (`src/packages/index.ts`'s
+`resolvePointBuyAllocation`) — a client-side estimate in the frontend's
+form is advisory, never authoritative.
+
+`createCustomCharacter` writes **two** files: the new
+`characters/<id>.json` sheet, and an appended
+`{characterId, startingNodeId}` entry in `experience.json`'s own
+`characters` placement array — required because `state/`'s `getState`
+throws for any loaded character sheet missing a placement entry, so a
+sheet without one would break every subsequent turn/scope read for the
+whole Experience, not just fail to load. `experience.json` is read and
+rewritten as raw JSON (not the Zod-parsed `Experience` object) so any
+field the schema doesn't know about survives the rewrite. The character
+id is a slug of the player's name, de-duplicated against ids already in
+the package. No starting inventory/techniques (empty arrays) — point-buy
+covers abilities/skills only, in this pass.
+
+Creating a character always makes it the active Experience/player (the
+same `applyCurrentExperience` reload-and-rebuild-if-a-model-is-loaded
+helper `select` uses), **unconditionally** — never short-circuited by an
+id match against the currently-selected Experience the way `select` is,
+since a newly written character file needs the fresh reload regardless
+of whether the target was already current.
+
 ---
 
 ## Memory

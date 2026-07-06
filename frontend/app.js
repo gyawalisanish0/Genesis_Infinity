@@ -12,6 +12,19 @@ const el = {
   experienceImportForm: document.getElementById("experience-import-form"),
   experienceZipInput: document.getElementById("experience-zip-input"),
   experienceImportBtn: document.getElementById("experience-import-btn"),
+  createCharacterDialog: document.getElementById("create-character-dialog"),
+  createCharacterStatus: document.getElementById("create-character-status"),
+  createCharacterForm: document.getElementById("create-character-form"),
+  createCharacterCancel: document.getElementById("create-character-cancel"),
+  createCharacterSubmit: document.getElementById("create-character-submit"),
+  ccName: document.getElementById("cc-name"),
+  ccClass: document.getElementById("cc-class"),
+  ccRace: document.getElementById("cc-race"),
+  ccBackground: document.getElementById("cc-background"),
+  ccAbilityPoints: document.getElementById("cc-ability-points"),
+  ccAbilityList: document.getElementById("cc-ability-list"),
+  ccSkillPoints: document.getElementById("cc-skill-points"),
+  ccSkillList: document.getElementById("cc-skill-list"),
   messages: document.getElementById("messages"),
   composer: document.getElementById("composer"),
   input: document.getElementById("input"),
@@ -624,12 +637,42 @@ function renderExperiences(data) {
       label.append(desc);
     }
 
-    li.append(label);
+    if (pkg.customCharacter) {
+      const createBtn = document.createElement("button");
+      createBtn.type = "button";
+      createBtn.className = "profile-add";
+      createBtn.textContent = "+";
+      createBtn.setAttribute("aria-label", `Create a character for ${pkg.name}`);
+      createBtn.title = "Create a character";
+      createBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openCreateCharacterDialog(pkg);
+      });
+      li.append(label, createBtn);
+    } else {
+      li.append(label);
+    }
+
     li.addEventListener("click", () => {
       if (pkg.id !== data.current.id) selectExperience(pkg.id, pkg.name);
     });
     el.experienceList.appendChild(li);
   }
+}
+
+// Shared by selectExperience and submitCreateCharacter below - both end
+// with the same "this is now the active Experience/player" UI update:
+// the old transcript and sidebar no longer describe anything real, so
+// the chat log clears; the composer stays gated on the rebuilt
+// scheduler's next your_turn (or on a model being loaded at all, if the
+// server was idle).
+function onExperienceSwitched(currentInfo, message) {
+  el.experienceName.textContent = currentInfo.name;
+  el.experienceDialog.close();
+  el.messages.innerHTML = "";
+  hasTurn = false;
+  updateComposerEnabled();
+  addMessage(message, "system");
 }
 
 async function selectExperience(id, name) {
@@ -640,17 +683,8 @@ async function selectExperience(id, name) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
-    el.experienceName.textContent = result.current.name;
     el.experienceDialogStatus.textContent = " ";
-    el.experienceDialog.close();
-    // A different Experience is a different world - the old transcript
-    // and sidebar no longer describe anything real. The composer stays
-    // gated on the rebuilt scheduler's next your_turn (or on a model
-    // being loaded at all, if the server was idle).
-    el.messages.innerHTML = "";
-    hasTurn = false;
-    updateComposerEnabled();
-    addMessage(`Switched to "${result.current.name}".`, "system");
+    onExperienceSwitched(result.current, `Switched to "${result.current.name}".`);
   } catch (error) {
     el.experienceDialogStatus.textContent = error.message;
   }
@@ -672,6 +706,119 @@ async function importExperienceZip(file) {
     el.experienceDialogStatus.textContent = error.message;
   } finally {
     el.experienceImportBtn.disabled = false;
+  }
+}
+
+// --- Create-a-character dialog: point-buy against a package's
+// customCharacter config (only present on packages that opt in - see
+// PackageInfo in src/packages/index.ts). Client-side pool enforcement is
+// purely for a responsive form; the server re-validates every allocation
+// authoritatively regardless.
+
+let createCharacterTarget = null; // the PackageInfo this dialog is currently building a character for
+
+function pointBuySpent(pointBuy, values) {
+  let spent = 0;
+  for (const value of Object.values(values)) spent += value - pointBuy.floor;
+  return spent;
+}
+
+function buildAllocationList(listEl, pointsLabelEl, defs, pointBuy, onValidityChange) {
+  listEl.innerHTML = "";
+  const values = {};
+  for (const def of defs) values[def.id] = pointBuy.floor;
+
+  const updateLabel = () => {
+    const spent = pointBuySpent(pointBuy, values);
+    pointsLabelEl.textContent = `${spent} / ${pointBuy.pool} points spent`;
+    pointsLabelEl.classList.toggle("over-budget", spent > pointBuy.pool);
+    onValidityChange(spent <= pointBuy.pool);
+  };
+
+  for (const def of defs) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    label.textContent = def.name;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = String(pointBuy.floor);
+    input.max = String(pointBuy.cap);
+    input.value = String(pointBuy.floor);
+    input.addEventListener("input", () => {
+      const parsed = Number(input.value);
+      values[def.id] = Number.isFinite(parsed) ? parsed : pointBuy.floor;
+      updateLabel();
+    });
+    label.append(input);
+    li.append(label);
+    listEl.appendChild(li);
+  }
+  updateLabel();
+  return values;
+}
+
+function openCreateCharacterDialog(pkg) {
+  createCharacterTarget = pkg;
+  el.createCharacterForm.reset();
+  el.createCharacterStatus.textContent = " ";
+
+  let abilitiesValid = true;
+  let skillsValid = true;
+  const updateSubmitEnabled = () => {
+    el.createCharacterSubmit.disabled = !(abilitiesValid && skillsValid);
+  };
+
+  el.ccAbilityValues = buildAllocationList(
+    el.ccAbilityList,
+    el.ccAbilityPoints,
+    pkg.customCharacter.abilities,
+    pkg.customCharacter.abilityPointBuy,
+    (ok) => {
+      abilitiesValid = ok;
+      updateSubmitEnabled();
+    },
+  );
+  el.ccSkillValues = buildAllocationList(
+    el.ccSkillList,
+    el.ccSkillPoints,
+    pkg.customCharacter.skills,
+    pkg.customCharacter.skillPointBuy,
+    (ok) => {
+      skillsValid = ok;
+      updateSubmitEnabled();
+    },
+  );
+
+  el.createCharacterDialog.showModal();
+}
+
+async function submitCreateCharacter() {
+  const name = el.ccName.value.trim();
+  if (!name) {
+    el.createCharacterStatus.textContent = "A name is required.";
+    return;
+  }
+  el.createCharacterSubmit.disabled = true;
+  el.createCharacterStatus.textContent = "Creating...";
+  try {
+    const result = await apiFetch(`/api/experiences/${encodeURIComponent(createCharacterTarget.id)}/characters`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        class: el.ccClass.value.trim() || undefined,
+        race: el.ccRace.value.trim() || undefined,
+        background: el.ccBackground.value.trim() || undefined,
+        abilities: el.ccAbilityValues,
+        skills: el.ccSkillValues,
+      }),
+    });
+    el.createCharacterDialog.close();
+    onExperienceSwitched(result.current, `Created "${result.character.name}" in "${result.current.name}".`);
+  } catch (error) {
+    el.createCharacterStatus.textContent = error.message;
+  } finally {
+    el.createCharacterSubmit.disabled = false;
   }
 }
 
@@ -838,6 +985,12 @@ el.experienceImportForm.addEventListener("submit", (event) => {
     return;
   }
   importExperienceZip(file);
+});
+
+el.createCharacterCancel.addEventListener("click", () => el.createCharacterDialog.close());
+el.createCharacterForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitCreateCharacter();
 });
 el.tabLocal.addEventListener("click", () => switchBackendTab("llamaCpp"));
 el.tabApi.addEventListener("click", () => switchBackendTab("api"));

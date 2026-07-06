@@ -115,6 +115,40 @@
     </div>
   </dialog>
 
+  <dialog id="create-character-dialog">
+    <h2>Create a character</h2>
+    <p class="muted small" id="create-character-status">&nbsp;</p>
+    <form id="create-character-form">
+      <label>
+        Name
+        <input id="cc-name" type="text" required />
+      </label>
+      <label>
+        Class <span class="muted small">(optional)</span>
+        <input id="cc-class" type="text" />
+      </label>
+      <label>
+        Race <span class="muted small">(optional)</span>
+        <input id="cc-race" type="text" />
+      </label>
+      <label>
+        Background <span class="muted small">(optional)</span>
+        <input id="cc-background" type="text" />
+      </label>
+
+      <h3>Abilities <span class="muted small" id="cc-ability-points"></span></h3>
+      <ul id="cc-ability-list" class="plain-list"></ul>
+
+      <h3>Skills <span class="muted small" id="cc-skill-points"></span></h3>
+      <ul id="cc-skill-list" class="plain-list"></ul>
+
+      <div class="dialog-actions">
+        <button type="button" id="create-character-cancel">Cancel</button>
+        <button type="submit" id="create-character-submit">Create</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="model-dialog">
     <h2>Model settings</h2>
     <p class="muted small" id="model-dialog-status">Status: —</p>
