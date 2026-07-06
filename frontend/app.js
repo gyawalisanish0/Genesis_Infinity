@@ -61,6 +61,9 @@ const el = {
   modelApiNone: document.getElementById("model-api-none"),
   modelProfilesList: document.getElementById("model-profiles-list"),
   modelUnloadBtn: document.getElementById("model-unload-btn"),
+  characterBtn: document.getElementById("character-btn"),
+  characterDialog: document.getElementById("character-dialog"),
+  characterDialogClose: document.getElementById("character-dialog-close"),
   sidebarEmpty: document.getElementById("sidebar-empty"),
   sidebarContent: document.getElementById("sidebar-content"),
   charName: document.getElementById("char-name"),
@@ -995,6 +998,9 @@ async function unloadModel() {
 
 el.modelBtn.addEventListener("click", openModelDialog);
 el.modelDialogClose.addEventListener("click", () => el.modelDialog.close());
+
+el.characterBtn.addEventListener("click", () => el.characterDialog.showModal());
+el.characterDialogClose.addEventListener("click", () => el.characterDialog.close());
 
 el.experienceBtn.addEventListener("click", () => {
   if (!connection) return;

@@ -37,18 +37,25 @@ On connect, the UI calls `GET /api/health` (to confirm the server is
 reachable and show the Experience name) and starts polling
 `GET /api/backend/status` every 3s. The composer stays disabled until
 status is `"ready"`; the moment it flips to ready, the UI fetches
-`GET /api/scope` once and renders the stats sidebar. This decouples
-"connected to a server" from "a model is loaded and playable" — the two
-were the same moment before runtime model-picking existed, but aren't
-anymore.
+`GET /api/scope` once and renders the character panel (see below). This
+decouples "connected to a server" from "a model is loaded and
+playable" — the two were the same moment before runtime model-picking
+existed, but aren't anymore.
 
-## Stats sidebar
+## Character panel
 
 Renders `Scope` (the same shape the AI model itself sees) as: HP as a
 severity-colored meter (green above 50%, amber above 25%, red below),
 armor class as a plain stat tile, current location, inventory, and who
-else is present. Collapses below the chat log on narrow (phone) viewports
-rather than beside it. Re-rendered from the `scope` bundled in every
+else is present. Lives in `#character-dialog`, opened by the floating
+`#character-btn` icon pinned to the bottom-left corner of the viewport
+(`.fab-btn`, positioned above the composer bar so it never overlaps the
+input) — the same `<dialog>` on every screen size, no separate desktop
+layout. `renderScope()` itself is unchanged from when this content was
+an always-visible sidebar: it just un-hides `#sidebar-content` (and
+hides the `#sidebar-empty` placeholder) inside whatever container holds
+those ids, so the dialog conversion only touched markup/CSS, not the
+rendering logic. Re-rendered from the `scope` bundled in every
 `POST /api/turn` response, so it never needs a second round trip per turn.
 
 ## Chat
@@ -76,8 +83,8 @@ Three event types drive the UI (see `docs/BACKEND_ARCHITECTURE.md`'s
   extracted chain-of-thought — see the backend doc), a collapsed-by-default
   `<details class="reasoning-block">` labeled "Thinking" is inserted right
   before the narration bubble; the pending bubble then loses its dots and
-  becomes the real narration text; `scope` re-renders the sidebar exactly
-  as before.
+  becomes the real narration text; `scope` re-renders the character panel
+  exactly as before.
 - **`error`** — the pending bubble and any (empty) tool log are removed,
   and the error is shown as a `system` message, same as a failed
   non-streaming request used to look.
@@ -112,7 +119,7 @@ autonomous NPC turn rather than one the player submitted:
 - **`turn_done`** — carries `{characterId, narration, reasoning, scope}`;
   finalized exactly like the per-turn stream's own `done` (collapse the
   tool log, insert a reasoning block if present, replace the pending
-  bubble's dots with the real text, re-render the sidebar from `scope`).
+  bubble's dots with the real text, re-render the character panel from `scope`).
 
 ## Experiences dialog
 
@@ -129,9 +136,10 @@ The topbar's Experience name doubles as a button opening the Experiences
   transcript describes nothing real anymore), updates the topbar name,
   and resets `hasTurn` — the composer re-enables on the rebuilt
   scheduler's next `your_turn` (or stays gated on a model being loaded
-  at all, if the server was idle). The sidebar refreshes automatically
-  through the existing status-poll ready-transition, since a switch with
-  a loaded model cycles status ready → starting → ready.
+  at all, if the server was idle). The character panel refreshes
+  automatically the next time it's opened (or the next turn re-renders
+  it), through the existing status-poll ready-transition, since a switch
+  with a loaded model cycles status ready → starting → ready.
 - **Character chips** — each package row that has existing (pre-authored)
   characters (`pkg.characters`, always present alongside `customCharacter`)
   gets a row of small pill buttons underneath, one per character

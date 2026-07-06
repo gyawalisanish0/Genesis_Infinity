@@ -38,39 +38,49 @@
           <button type="submit" id="send-btn" disabled>Send</button>
         </form>
       </section>
-
-      <aside class="sidebar" id="sidebar">
-        <div class="sidebar-empty" id="sidebar-empty">Connect to see character info.</div>
-        <div class="sidebar-content hidden" id="sidebar-content">
-          <h2 id="char-name">—</h2>
-          <p class="char-sub" id="char-sub"></p>
-
-          <div class="meter-block">
-            <div class="meter-label">
-              <span>HP</span>
-              <span id="hp-value">—</span>
-            </div>
-            <div class="meter-track"><div class="meter-fill" id="hp-fill"></div></div>
-          </div>
-
-          <div class="stat-tile">
-            <span class="stat-label">Armor Class</span>
-            <span class="stat-value" id="ac-value">—</span>
-          </div>
-
-          <h3>Location</h3>
-          <p id="node-name" class="muted">—</p>
-          <p id="node-desc" class="muted small"></p>
-
-          <h3>Inventory</h3>
-          <ul id="inventory-list" class="plain-list"></ul>
-
-          <h3>Present</h3>
-          <ul id="others-list" class="plain-list"></ul>
-        </div>
-      </aside>
     </main>
+
+    <button id="character-btn" class="fab-btn" title="Character" aria-label="Character info">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="8" r="4"></circle>
+        <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path>
+      </svg>
+    </button>
   </div>
+
+  <dialog id="character-dialog">
+    <div class="sidebar-empty" id="sidebar-empty">Connect to see character info.</div>
+    <div class="sidebar-content hidden" id="sidebar-content">
+      <h2 id="char-name">—</h2>
+      <p class="char-sub" id="char-sub"></p>
+
+      <div class="meter-block">
+        <div class="meter-label">
+          <span>HP</span>
+          <span id="hp-value">—</span>
+        </div>
+        <div class="meter-track"><div class="meter-fill" id="hp-fill"></div></div>
+      </div>
+
+      <div class="stat-tile">
+        <span class="stat-label">Armor Class</span>
+        <span class="stat-value" id="ac-value">—</span>
+      </div>
+
+      <h3>Location</h3>
+      <p id="node-name" class="muted">—</p>
+      <p id="node-desc" class="muted small"></p>
+
+      <h3>Inventory</h3>
+      <ul id="inventory-list" class="plain-list"></ul>
+
+      <h3>Present</h3>
+      <ul id="others-list" class="plain-list"></ul>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" id="character-dialog-close">Close</button>
+    </div>
+  </dialog>
 
   <dialog id="settings-dialog">
     <form id="settings-form">
