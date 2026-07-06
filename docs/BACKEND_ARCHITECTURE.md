@@ -299,17 +299,30 @@ directories are skipped silently; duplicate ids resolve first-root-wins.
 
 **Runtime switching** (`GET /api/experiences`,
 `POST /api/experiences/select`): the current Experience is mutable
-server state (previously fixed at boot). Selecting a package swaps the
-current dir/dbPath (each package keeps its own `dtm.sqlite`, so
-switching back later resumes that Experience's own history), re-resolves
-the player character — precedence: the Experience's own
-`playerCharacterId`, then the server-configured `CHARACTER_ID` if that
-character exists there, then the first placement, then the first sheet —
-and, if a model is currently loaded, rebuilds the Engine against the new
-Experience with the same backend (the remembered `lastBackend`),
-fire-and-forget under the same status-polling contract and 409
-in-flight guard as `POST /api/backend`. If the server is idle, only the
+server state (previously fixed at boot). `GET /api/experiences` returns
+`{current: {id, name, playerCharacterId}, packages}`, each `PackageInfo`
+including its full `characters` roster (`{id, name}[]`) so a client can
+offer a real "play as X" picker rather than asking the player to type an
+id. Selecting a package (`POST /api/experiences/select`,
+`{id, characterId?}`) swaps the current dir/dbPath (each package keeps
+its own `dtm.sqlite`, so switching back later resumes that Experience's
+own history) and resolves the player character: an explicit `characterId`
+wins outright if it names a sheet in the target Experience (400 if it
+doesn't); otherwise the existing fallback chain applies — the
+Experience's own `playerCharacterId`, then the server-configured
+`CHARACTER_ID` if that character exists there, then the first placement,
+then the first sheet. If a model is currently loaded, the Engine is
+rebuilt against the new Experience with the same backend (the remembered
+`lastBackend`), fire-and-forget under the same status-polling contract
+and 409 in-flight guard as `POST /api/backend`; if idle, only the
 current-experience slot changes and the next model load picks it up.
+
+The same-Experience-id short-circuit (skip the reload entirely when
+`id` already matches `current.id`) only fires when `characterId` is
+*also* unset or already matches — an explicit `characterId` for the
+already-selected Experience still goes through the full reload, since
+that's how a player switches which existing character they control
+without leaving the Experience.
 
 **Zip import** (`POST /api/experiences/import`, raw `application/zip`
 body — no multipart): extracted via `yauzl` (the project's third runtime

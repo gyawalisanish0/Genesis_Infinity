@@ -19,11 +19,17 @@ an ongoing upstream-merge tax). It's deployed as-is to GitHub Pages (see
 
 ## Connection settings
 
-API base URL, shared secret (`X-Api-Key`), and character id are entered
-once via a `<dialog>` and cached in `localStorage` (`genesis-infinity-connection`)
+API base URL and shared secret (`X-Api-Key`) are entered once via a
+`<dialog>` and cached in `localStorage` (`genesis-infinity-connection`)
 so a returning visitor reconnects automatically. `apiFetch()` is the one
 place that attaches the `X-Api-Key` header and unwraps `{error}` JSON
 bodies into thrown `Error`s.
+
+This dialog used to also ask for a "Character id" text field — removed,
+since the server never actually read it (`GET /api/scope` ignored the
+query param it was sent on). Which character to play is a per-Experience
+concern the server resolves on its own, and is now chosen through the
+Experiences dialog's character chips instead — see below.
 
 ## Connect → ready flow
 
@@ -126,6 +132,17 @@ The topbar's Experience name doubles as a button opening the Experiences
   at all, if the server was idle). The sidebar refreshes automatically
   through the existing status-poll ready-transition, since a switch with
   a loaded model cycles status ready → starting → ready.
+- **Character chips** — each package row that has existing (pre-authored)
+  characters (`pkg.characters`, always present alongside `customCharacter`)
+  gets a row of small pill buttons underneath, one per character
+  (`.character-chip-row`/`.character-chip`, `buildAllocationList`'s
+  sibling in `renderExperiences`). The active character (for the
+  currently-selected package) is highlighted via `.active`, compared
+  against `data.current.playerCharacterId`. Clicking a chip calls
+  `selectExperience(pkg.id, pkg.name, character.id)`, which includes
+  `characterId` in the `POST /api/experiences/select` body — this is how
+  a player picks *which* existing character to control, replacing the
+  old Connection-settings text field that did nothing.
 - **Zip import** — the frontend's first file input. The picked File is
   POSTed as the raw `application/zip` body via the same `apiFetch`
   (no multipart, no new upload machinery), and the list refreshes on

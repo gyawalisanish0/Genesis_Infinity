@@ -25,6 +25,14 @@ export interface PackageInfo {
   /** Absolute-or-relative directory the package loads from (loadExperience's dir). */
   dir: string;
   /**
+   * Every pre-authored character in this package (id + name only) — lets
+   * a client offer "play as X" as a real picker instead of the player
+   * having to know/type a character id (see server/'s POST
+   * /api/experiences/select, which accepts an optional characterId
+   * drawn from this same list).
+   */
+  characters: { id: string; name: string }[];
+  /**
    * Present iff this Experience opts into player-built characters (see
    * ExperienceSchema's customCharacter field and createCustomCharacter
    * below) — enough for a client to render a point-buy form with no
@@ -50,6 +58,7 @@ function toPackageInfo(loaded: LoadedExperience, dir: string): PackageInfo {
     author: loaded.experience.author,
     mode: loaded.mode,
     dir,
+    characters: loaded.characters.map((c) => ({ id: c.id, name: c.name })),
     customCharacter: loaded.experience.customCharacter
       ? {
           abilityPointBuy: loaded.experience.customCharacter.abilityPointBuy,

@@ -479,6 +479,51 @@ body {
   color: var(--status-critical);
 }
 
+/* #experience-list rows can carry a second line (the character-chip-row
+   below) under the usual label+button line, so the outer <li> switches
+   to column layout and that top line moves into its own .profile-row -
+   scoped to this list so every other .plain-list (model search results,
+   saved profiles) keeps its plain single-row layout. */
+#experience-list li {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.profile-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.character-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.character-chip {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.character-chip:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.character-chip.active {
+  color: var(--status-good);
+  border-color: var(--status-good);
+}
+
 dialog {
   background: var(--surface);
   color: var(--text-primary);
