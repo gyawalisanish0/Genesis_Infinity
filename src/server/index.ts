@@ -1,10 +1,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { dirname, join } from "node:path";
 import { createEngine, type Engine } from "../core/index.js";
-import { loadExperience } from "../data/loaders/experience.js";
+import { loadExperience, type LoadedExperience } from "../data/loaders/experience.js";
 import { getState } from "../state/index.js";
 import { getScope } from "../scope/index.js";
 import type { BackendConfig, ToolCallRecord } from "../ai/index.js";
 import { createScheduler, type Scheduler } from "../scheduler/index.js";
+import { discoverPackages, importPackageZip, createCustomCharacter, type CreateCharacterInput } from "../packages/index.js";
 import { searchGgufModels, listGgufFiles, downloadGgufModel } from "./modelCatalogue.js";
 import { KNOWN_API_PROVIDERS, isKnownApiProvider, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
 import { listApiModels } from "./apiModelCatalogue.js";
@@ -14,6 +16,14 @@ export interface ServerOptions {
   dbPath: string;
   /** Single-session beta: which character the one connected player controls. */
   characterId: string;
+  /**
+   * Where imported Experience packages are installed, and the primary
+   * discovery root for GET /api/experiences. Defaults to "experiences".
+   * The parent directory of `experienceDir` (e.g. "examples") is always
+   * scanned as a second discovery root, so the bootstrap Experience is
+   * itself listed/selectable without being copied anywhere.
+   */
+  experiencesDir?: string;
   port: number;
   /**
    * Shared secret checked against the X-Api-Key request header. This is a
@@ -76,6 +86,51 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
+ * Reads a request body as raw bytes (for the binary .zip package upload —
+ * readJsonBody above accumulates a UTF-8 string, which corrupts binary
+ * data), rejecting past `maxBytes` so a runaway upload can't exhaust
+ * memory before the packages/ module's own size guards ever see it.
+ */
+function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    req.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        reject(new Error(`Request body exceeds ${maxBytes} bytes`));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+/**
+ * Which character the connected player controls in a given Experience —
+ * resolved fresh on every Experience select, since the server-configured
+ * default (cli.ts's CHARACTER_ID) only makes sense for the Experience it
+ * was deployed with. Precedence: the Experience's own `playerCharacterId`
+ * declaration (content-authored, always wins when valid), then the
+ * server-configured id if that character actually exists here, then the
+ * first declared placement, then the first character sheet.
+ */
+function resolvePlayerCharacterId(loaded: LoadedExperience, configuredId: string): string {
+  const sheetIds = new Set(loaded.characters.map((c) => c.id));
+  const declared = loaded.experience.playerCharacterId;
+  if (declared && sheetIds.has(declared)) return declared;
+  if (sheetIds.has(configuredId)) return configuredId;
+  const firstPlacement = loaded.experience.characters?.[0]?.characterId;
+  if (firstPlacement && sheetIds.has(firstPlacement)) return firstPlacement;
+  const firstSheet = loaded.characters[0]?.id;
+  if (firstSheet) return firstSheet;
+  throw new Error(`Experience "${loaded.experience.id}" has no characters`);
+}
+
+/**
  * Starts a minimal HTTP API in front of a single core/ Engine instance —
  * the bridge between frontend/'s static UI and the engine, since core/'s
  * Engine was previously only ever driven directly from io/cli.ts's stdin
@@ -86,15 +141,35 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
  */
 export async function startServer(options: ServerOptions): Promise<{ close: () => Promise<void> }> {
   const modelsDir = options.modelsDir ?? "models";
+  const experiencesDir = options.experiencesDir ?? "experiences";
+  // Discovery roots: imports land in experiencesDir; the bootstrap
+  // Experience's parent (e.g. "examples") is scanned too so it's listed
+  // without being copied. discoverPackages dedupes by id, first root wins.
+  const experienceRoots = [experiencesDir, dirname(options.experienceDir)];
 
-  // Experience metadata (name, characters, world) doesn't depend on a
-  // backend — loaded once up front so /api/health can report it even
-  // before the frontend has picked a model.
-  const experienceName = (await loadExperience(options.experienceDir)).experience.name;
+  // The current Experience is mutable server state (switchable at runtime
+  // via POST /api/experiences/select), seeded from the deploy-time
+  // options. Loaded once up front so /api/health can report the name even
+  // before the frontend has picked a model; playerCharacterId is
+  // re-resolved per Experience (see resolvePlayerCharacterId) since the
+  // configured CHARACTER_ID only makes sense for the bootstrap Experience.
+  const initialLoaded = await loadExperience(options.experienceDir);
+  let current = {
+    id: initialLoaded.experience.id,
+    name: initialLoaded.experience.name,
+    dir: options.experienceDir,
+    dbPath: options.dbPath,
+    playerCharacterId: resolvePlayerCharacterId(initialLoaded, options.characterId),
+  };
 
   let engine: Engine | null = null;
   let scheduler: Scheduler | null = null;
   let status: BackendStatus = { status: "idle" };
+  // The last successfully-applied backend, remembered so switching
+  // Experiences while a model is loaded can rebuild the Engine against
+  // the new Experience with the same model, without the frontend having
+  // to re-pick one.
+  let lastBackend: { backend: BackendConfig; readyStatus: BackendStatus } | null = null;
 
   // Single-session beta (see this function's own doc comment): only one
   // turn is ever in flight at a time, so a single mutable slot is enough to
@@ -136,10 +211,10 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       if (previousEngine) await previousEngine.dispose();
 
       engine = await createEngine({
-        experienceDir: options.experienceDir,
-        dbPath: options.dbPath,
+        experienceDir: current.dir,
+        dbPath: current.dbPath,
         backend,
-        playerCharacterId: options.characterId,
+        playerCharacterId: current.playerCharacterId,
         onToolCall: (call) => {
           if (options.debug) {
             console.log(`[debug] ${call.name}(${JSON.stringify(call.params)}) -> ${JSON.stringify(call.result)}`);
@@ -154,7 +229,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         experienceId: engine.toolCtx.loaded.experience.id,
         timeline: engine.toolCtx.timeline,
         characterIds: engine.toolCtx.loaded.characters.map((c) => c.id),
-        playerCharacterId: options.characterId,
+        playerCharacterId: current.playerCharacterId,
         getScope: currentScope,
         broadcast: broadcastEvent,
         runNpcTurn: async (characterId) => {
@@ -168,10 +243,35 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       });
 
       status = readyStatus;
+      lastBackend = { backend, readyStatus };
     } catch (error) {
       engine = null;
       scheduler = null;
       status = { status: "error", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /**
+   * Reassigns the mutable `current` Experience/player-character slot from
+   * a freshly loaded package, then — if a model is already loaded —
+   * rebuilds the Engine against it with the same backend (fire-and-forget,
+   * same status-polling contract as POST /api/backend). Shared by
+   * POST /api/experiences/select and POST /api/experiences/:id/characters:
+   * both need this exact "make this the active Experience/player" step,
+   * but the create-character route always calls it unconditionally,
+   * never short-circuited by an id match the way select's is — a newly
+   * written character file requires the fresh `loaded` this always takes.
+   */
+  function applyCurrentExperience(loaded: LoadedExperience, dir: string, playerCharacterId: string): void {
+    current = {
+      id: loaded.experience.id,
+      name: loaded.experience.name,
+      dir,
+      dbPath: join(dir, "dtm.sqlite"),
+      playerCharacterId,
+    };
+    if (engine && status.status === "ready" && lastBackend) {
+      void setBackend(lastBackend.backend, lastBackend.readyStatus);
     }
   }
 
@@ -200,7 +300,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       engine.currentTurn(),
       engine.toolCtx.timeline.currentUnit(),
     );
-    return getScope(engine.toolCtx.world, state, options.characterId);
+    return getScope(engine.toolCtx.world, state, current.playerCharacterId);
   }
 
   const server = createServer(async (req, res) => {
@@ -226,13 +326,122 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
     try {
       if (req.method === "GET" && url.pathname === "/api/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ status: "ok", experience: experienceName }));
+        res.end(JSON.stringify({ status: "ok", experience: current.name }));
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/api/backend/status") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(status));
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/experiences") {
+        const packages = await discoverPackages(experienceRoots);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ current: { id: current.id, name: current.name }, packages }));
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/experiences/select") {
+        // Same in-flight guard as POST /api/backend: an Experience switch
+        // rebuilds the Engine, which must not race a model download/load.
+        if (status.status === "downloading" || status.status === "starting") {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "A model switch is already in progress" }));
+          return;
+        }
+        const body = (await readJsonBody(req)) as { id?: unknown };
+        if (typeof body.id !== "string" || body.id.trim() === "") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Request body must be { id: string }" }));
+          return;
+        }
+        if (body.id === current.id) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ current: { id: current.id, name: current.name }, status }));
+          return;
+        }
+        const packages = await discoverPackages(experienceRoots);
+        const target = packages.find((p) => p.id === body.id);
+        if (!target) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `No installed Experience with id "${body.id}"` }));
+          return;
+        }
+        const loaded = await loadExperience(target.dir);
+        applyCurrentExperience(loaded, target.dir, resolvePlayerCharacterId(loaded, options.characterId));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ current: { id: current.id, name: current.name }, status }));
+        return;
+      }
+
+      const createCharacterMatch = url.pathname.match(/^\/api\/experiences\/([^/]+)\/characters$/);
+      if (req.method === "POST" && createCharacterMatch) {
+        // Same in-flight guard as select/backend: this also rebuilds the Engine.
+        if (status.status === "downloading" || status.status === "starting") {
+          res.writeHead(409, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "A model switch is already in progress" }));
+          return;
+        }
+        const targetId = decodeURIComponent(createCharacterMatch[1]!);
+        const body = (await readJsonBody(req)) as Record<string, unknown>;
+        if (typeof body.name !== "string" || body.name.trim() === "") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Request body must include a non-empty { name: string }" }));
+          return;
+        }
+        const packages = await discoverPackages(experienceRoots);
+        const target = packages.find((p) => p.id === targetId);
+        if (!target) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: `No installed Experience with id "${targetId}"` }));
+          return;
+        }
+        const asRecord = (value: unknown): Record<string, number> | undefined =>
+          value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, number>) : undefined;
+        const asString = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+        const input: CreateCharacterInput = {
+          name: body.name,
+          class: asString(body.class),
+          race: asString(body.race),
+          background: asString(body.background),
+          personality: asString(body.personality),
+          tone: asString(body.tone),
+          abilities: asRecord(body.abilities),
+          skills: asRecord(body.skills),
+        };
+        try {
+          const targetLoaded = await loadExperience(target.dir);
+          const created = await createCustomCharacter(target.dir, targetLoaded, input);
+          const reloaded = await loadExperience(target.dir);
+          applyCurrentExperience(reloaded, target.dir, created.id);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ current: { id: current.id, name: current.name }, character: created, status }));
+        } catch (error) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/experiences/import") {
+        // Cap slightly above packages/'s own uncompressed-size guard — a
+        // compressed archive is never larger than its uncompressed content.
+        const zipBuffer = await readRawBody(req, 60 * 1024 * 1024);
+        if (zipBuffer.length === 0) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Request body must be the .zip file's raw bytes" }));
+          return;
+        }
+        try {
+          const imported = await importPackageZip(zipBuffer, experiencesDir);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(imported));
+        } catch (error) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
         return;
       }
 
@@ -393,7 +602,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
         // the frontend has even had a chance to open this connection (see
         // scheduler/'s own doc comment on isWaitingOnPlayer).
         if (scheduler?.isWaitingOnPlayer()) {
-          res.write(`event: your_turn\ndata: ${JSON.stringify({ characterId: options.characterId })}\n\n`);
+          res.write(`event: your_turn\ndata: ${JSON.stringify({ characterId: current.playerCharacterId })}\n\n`);
         }
         req.on("close", () => eventClients.delete(res));
         return;
@@ -437,7 +646,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           // their next scheduled position and re-arms whoever's due next
           // (possibly an NPC, immediately, if their turn was already due
           // and waiting - see scheduler/'s own doc comment on tie-breaking).
-          scheduler?.onCharacterActed(options.characterId);
+          scheduler?.onCharacterActed(current.playerCharacterId);
         } catch (error) {
           sendEvent("error", { error: error instanceof Error ? error.message : String(error) });
         } finally {

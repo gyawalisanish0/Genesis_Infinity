@@ -32,8 +32,16 @@ An **Experience** is the full data package for a playable instance. It bundles:
 - **Location metadata**
 - **Rulesets**
 - **Mode** — single-player or multiplayer, set as a config field on the
-  Experience (not a separate engine codepath)
+  Experience (not a separate engine codepath). Built as a schema field
+  (`ExperienceModeSchema`, resolved onto `LoadedExperience.mode`,
+  defaulting `"single-player"`) — schema-only today: the engine still
+  runs exactly one connected user per process regardless of the declared
+  mode; multi-user session routing remains deferred.
 - Extensible — additional content types may be added later
+
+An Experience is also a distributable **package** — see **Experience
+Packages** below for the manifest fields, runtime discovery/switching,
+and .zip import.
 
 ### World
 
@@ -103,11 +111,17 @@ nodes** (the actual visitable locations). Schema defined in
 ### Characters
 
 - **Personality** and **tone** — drive how the AI voices the character.
-- **Plot points**, timecoded — a timeline of character-specific narrative beats.
+  Built: optional string fields on `CharacterSheetSchema`, reaching the
+  model automatically through `get_character_sheet` (the sheet is
+  returned whole — no separate plumbing needed).
+- **Plot points**, timecoded — a timeline of character-specific narrative
+  beats. Built: `CharacterPlotPointSchema` (`{id, description, atUnit}`,
+  `atUnit` in `timeline/` units, ids unique per sheet), also visible via
+  `get_character_sheet`. Schema-only today — nothing fires them
+  mechanically yet, same deferral as Experience-level plot points below.
 - **Stats and skills** — the mechanical layer, used by `rules/` for checks.
-  Defined as a `CharacterSheet` in `src/data/schemas/character.ts` (Zod),
-  separate from the narrative fields above (combined into a full Character
-  entity in a later pass):
+  All of the above live together on the full Character entity —
+  `CharacterSheet` in `src/data/schemas/character.ts` (Zod):
   - **Abilities** — D&D-style baseline (STR/DEX/CON/INT/WIS/CHA) provided as
     a template (`DEFAULT_ABILITIES`), but overridable/extensible per
     Experience — not a fixed enum.
@@ -248,6 +262,106 @@ Plot points vary along two independent axes:
 
 A plot point can combine any pairing (e.g. hardcoded + triggered, soft-coded +
 timestamped).
+
+Built as `PlotPointSchema` (`src/data/schemas/experience.ts`): `{id, name,
+description, authoring, firing, trigger?, atUnit?}` — `trigger` (a
+free-text condition description) is required when `firing` is
+`"trigger-based"`, `atUnit` (a `timeline/` unit) when `"timestamp-based"`,
+enforced at validation; ids unique per Experience. **Schema-only today:**
+plot points are validated and loaded (`experience.plotPoints` on
+`LoadedExperience`), but no engine firing mechanism exists yet —
+trigger/timestamp firing is its own deferred design (likely tied to
+`scheduler/`), and nothing exposes Experience-level plot points to the
+model either (character-level ones do reach it, via
+`get_character_sheet`).
+
+---
+
+## Experience Packages
+
+An Experience directory *is* the package format — no separate archive
+manifest. The package-manifest fields (`version`, `description`,
+`author`) live directly on `ExperienceSchema` alongside `id`/`name`, so
+a package has exactly one source of identity (no second metadata file
+whose id could disagree). `playerCharacterId` optionally names which
+character the connected player controls when the package is selected
+(see resolution order below).
+
+**Discovery** (`src/packages/index.ts`'s `discoverPackages`): the server
+scans two roots' immediate subdirectories — `experiencesDir` (imports
+land here; `EXPERIENCES_DIR`, default `"experiences"`, gitignored) and
+the parent of the bootstrap `EXPERIENCE_DIR` (e.g. `examples/`), so the
+shipped example is listed without being copied anywhere. "Valid" means
+the whole package actually loads (`loadExperience`: experience.json +
+world.json + characters/*, full Zod validation), not just that a
+manifest parses — a listing entry is guaranteed selectable. Invalid
+directories are skipped silently; duplicate ids resolve first-root-wins.
+
+**Runtime switching** (`GET /api/experiences`,
+`POST /api/experiences/select`): the current Experience is mutable
+server state (previously fixed at boot). Selecting a package swaps the
+current dir/dbPath (each package keeps its own `dtm.sqlite`, so
+switching back later resumes that Experience's own history), re-resolves
+the player character — precedence: the Experience's own
+`playerCharacterId`, then the server-configured `CHARACTER_ID` if that
+character exists there, then the first placement, then the first sheet —
+and, if a model is currently loaded, rebuilds the Engine against the new
+Experience with the same backend (the remembered `lastBackend`),
+fire-and-forget under the same status-polling contract and 409
+in-flight guard as `POST /api/backend`. If the server is idle, only the
+current-experience slot changes and the next model load picks it up.
+
+**Zip import** (`POST /api/experiences/import`, raw `application/zip`
+body — no multipart): extracted via `yauzl` (the project's third runtime
+dependency, chosen for its safety pedigree) into a temp directory with
+defense-in-depth guards — yauzl's own entry-name validation first, plus
+`packages/`'s own traversal check, entry-count cap (200), total
+uncompressed-size cap (50MB), and a raw-body cap upstream in `server/`
+(60MB, since compressed ≤ uncompressed). Both zip layouts authors
+plausibly produce are accepted (files at the archive root, or under one
+top-level folder). The extracted package is validated by *actually
+loading it* before installation — an import that succeeds is guaranteed
+selectable — any accidentally-zipped `dtm.sqlite` is stripped (runtime
+state never ships with content), and it's installed at
+`<experiencesDir>/<experienceId>`, rejecting a duplicate id rather than
+silently overwriting. The frontend's Experiences dialog (opened from
+the topbar Experience name) lists/switches packages and uploads a .zip —
+see docs/FRONTEND_ARCHITECTURE.md.
+
+**Custom character creation** (`POST /api/experiences/:id/characters`,
+opt-in per package): a package declares `customCharacter`
+(`CustomCharacterConfigSchema`, `src/data/schemas/experience.ts`) to let
+the player build a character instead of only ever playing one of the
+pre-authored ones. The config fixes `startingNodeId`, `hitPoints.max`,
+and `armorClass` for every custom character in that Experience — the
+player's only input is a name plus point-buy allocation across two
+pools (`abilityPointBuy`/`skillPointBuy`, each `{floor, cap, pool}`):
+every ability/skill in this Experience's own resolved
+`ruleset.abilities`/`ruleset.skills` starts at `floor`, may be raised to
+at most `cap`, and the sum spent above floor across all of them may not
+exceed `pool`. Validated server-side only (`src/packages/index.ts`'s
+`resolvePointBuyAllocation`) — a client-side estimate in the frontend's
+form is advisory, never authoritative.
+
+`createCustomCharacter` writes **two** files: the new
+`characters/<id>.json` sheet, and an appended
+`{characterId, startingNodeId}` entry in `experience.json`'s own
+`characters` placement array — required because `state/`'s `getState`
+throws for any loaded character sheet missing a placement entry, so a
+sheet without one would break every subsequent turn/scope read for the
+whole Experience, not just fail to load. `experience.json` is read and
+rewritten as raw JSON (not the Zod-parsed `Experience` object) so any
+field the schema doesn't know about survives the rewrite. The character
+id is a slug of the player's name, de-duplicated against ids already in
+the package. No starting inventory/techniques (empty arrays) — point-buy
+covers abilities/skills only, in this pass.
+
+Creating a character always makes it the active Experience/player (the
+same `applyCurrentExperience` reload-and-rebuild-if-a-model-is-loaded
+helper `select` uses), **unconditionally** — never short-circuited by an
+id match against the currently-selected Experience the way `select` is,
+since a newly written character file needs the fresh reload regardless
+of whether the target was already current.
 
 ---
 
@@ -1821,11 +1935,13 @@ defender's roll never happens in the fallback path).
   stories in `open` worlds — separate from `dtm/`)
 - Bounded check-tool-call loop (the `X` cap in Turn Flow) — not enforced in
   the beta `ai/` implementation, see Beta Implementation above
-- `mode` / `playerCharacterId` on `ExperienceSchema` — beta resolves player
-  identification via a CLI arg / `server/` config instead, see Beta
-  Implementation above. `EngineOptions.playerCharacterId` being `string |
-  null` (rather than a bare `string`) is deliberate groundwork for this:
-  a future multi-user mode would route several connected users, each
+- `mode` / `playerCharacterId` on `ExperienceSchema` — **both now built
+  as schema fields** (see Experience Model and Experience Packages
+  above): `playerCharacterId` actually drives per-Experience player
+  resolution on package select, `mode` is declared-but-inert.
+  `EngineOptions.playerCharacterId` being `string | null` (rather than a
+  bare `string`) is deliberate groundwork for multi-user: a future
+  multi-user mode would route several connected users, each
   independently tied to a characterId or `null` (unassigned — e.g. a
   spectator, or someone who hasn't picked a character yet), through that
   same null-aware system-prompt branch. What's still undesigned and NOT
@@ -1833,14 +1949,22 @@ defender's roll never happens in the fallback path).
   turns against one `Engine`/`Dtm`, whether that's one `Engine` handling
   several users or several `Engine`s sharing a `Dtm`, and how per-user
   identity is authenticated/assigned in the first place. Today's beta is
-  still exactly one connected user per `Engine` process.
+  still exactly one connected user per `Engine` process, whatever `mode`
+  a package declares.
+- Plot point firing — Experience-level (`PlotPointSchema`) and
+  character-level (`CharacterPlotPointSchema`) plot points are schema-only:
+  validated and loaded, but no trigger/timestamp firing mechanism exists
+  yet (likely tied to `scheduler/` when designed), and Experience-level
+  ones aren't yet exposed to the model at all.
 - Tier 2–5 specialized-model splits and the SAL/MML loading strategies —
   beta only implements Tier 1 (single model)
 - Data file format for Ruleset/other Experience content (world data uses
   JSON + Zod per `src/data/schemas/world.ts`; character mechanical data uses
   JSON + Zod per `src/data/schemas/character.ts` — other content types TBD)
-- Full Character entity combining CharacterSheet (stats/skills) with the
-  narrative fields (personality, tone, timecoded plot points)
+- ~~Full Character entity combining CharacterSheet (stats/skills) with the
+  narrative fields (personality, tone, timecoded plot points)~~ — built:
+  `personality`/`tone`/`plotPoints` now live on `CharacterSheetSchema`
+  (see Characters above)
 - Confirmed job-to-model mapping at each tier (1–5)
 - Engine constant configuration schema (global cap + per-job overrides)
 - Hardware capability detection method

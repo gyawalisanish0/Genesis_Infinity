@@ -108,6 +108,48 @@ autonomous NPC turn rather than one the player submitted:
   tool log, insert a reasoning block if present, replace the pending
   bubble's dots with the real text, re-render the sidebar from `scope`).
 
+## Experiences dialog
+
+The topbar's Experience name doubles as a button opening the Experiences
+`<dialog>` — the runtime package picker (see
+`docs/BACKEND_ARCHITECTURE.md`'s Experience Packages). It has two parts:
+
+- **Installed list** (`#experience-list`) — `GET /api/experiences`,
+  rendered with the same imperative list pattern as the model dialog's
+  saved profiles: the current package highlighted, name + optional
+  version/description per row, click-to-switch on any other row. A
+  switch (`POST /api/experiences/select`) closes the dialog, clears the
+  chat log (a different Experience is a different world — the old
+  transcript describes nothing real anymore), updates the topbar name,
+  and resets `hasTurn` — the composer re-enables on the rebuilt
+  scheduler's next `your_turn` (or stays gated on a model being loaded
+  at all, if the server was idle). The sidebar refreshes automatically
+  through the existing status-poll ready-transition, since a switch with
+  a loaded model cycles status ready → starting → ready.
+- **Zip import** — the frontend's first file input. The picked File is
+  POSTed as the raw `application/zip` body via the same `apiFetch`
+  (no multipart, no new upload machinery), and the list refreshes on
+  success. Errors surface in the dialog's own status line, same
+  convention as the model dialog.
+
+A package row whose `customCharacter` is present (see
+`docs/BACKEND_ARCHITECTURE.md`'s Experience Packages) also gets a small
+"+" button (`.profile-add`) opening the **create-character dialog**
+(`#create-character-dialog`) — a name field plus one number input per
+ability/skill the Experience's ruleset declares (`buildAllocationList`),
+each defaulting to that pool's `floor`. A running "N / pool points
+spent" readout per pool (`pointBuySpent`) turns red (`.over-budget`) and
+disables Submit the moment an allocation exceeds `abilityPointBuy.pool`
+or `skillPointBuy.pool` — purely a responsive UI; the server
+re-validates every allocation authoritatively regardless (see
+`resolvePointBuyAllocation`), so the client-side check is advisory, not
+a substitute. Submitting posts to
+`POST /api/experiences/:id/characters`, then runs the exact same
+post-switch UI update as selecting an existing package
+(`onExperienceSwitched` — chat log cleared, topbar name updated,
+`hasTurn` reset), shared between both flows since creating a character
+also always makes it the active Experience/player.
+
 ## Model settings dialog
 
 A separate "Model settings" `<dialog>`, opened from a topbar status

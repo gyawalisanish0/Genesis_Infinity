@@ -254,13 +254,33 @@ export const InventoryEntrySchema = z.object({
 export type InventoryEntry = z.infer<typeof InventoryEntrySchema>;
 
 /**
- * The mechanical layer of a character — stats and skills used by rules/
- * for checks. Identity fields (class/race/background) are open strings,
- * not fixed enums, so non-fantasy settings aren't forced into D&D content.
- *
- * This is distinct from the broader Character entity (personality, tone,
- * timecoded plot points — see docs/BACKEND_ARCHITECTURE.md), which will combine
- * this sheet with narrative fields in a later pass.
+ * A character-specific narrative beat, timecoded on the timeline/ unit
+ * axis ("Plot points, timecoded — a timeline of character-specific
+ * narrative beats", docs/BACKEND_ARCHITECTURE.md's Characters section).
+ * Distinct from the Experience-level PlotPointSchema
+ * (data/schemas/experience.ts): a character plot point is always
+ * timestamp-anchored (no trigger/authoring axes) and belongs to one
+ * character's own arc rather than the shared narrative. Schema-only
+ * today — validated, loaded, and visible to the model through
+ * get_character_sheet (the sheet is returned whole), but nothing fires
+ * them mechanically yet.
+ */
+export const CharacterPlotPointSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  atUnit: z.number().int().nonnegative(),
+});
+export type CharacterPlotPoint = z.infer<typeof CharacterPlotPointSchema>;
+
+/**
+ * The full Character entity — the mechanical layer (stats and skills used
+ * by rules/ for checks) plus the narrative layer the docs' Experience
+ * Model describes: `personality` and `tone` drive how the AI voices the
+ * character (they reach the model through get_character_sheet, which
+ * returns the sheet whole — no separate plumbing), and `plotPoints` is
+ * the character's own timecoded arc (see CharacterPlotPointSchema).
+ * Identity fields (class/race/background) are open strings, not fixed
+ * enums, so non-fantasy settings aren't forced into D&D content.
  */
 export const CharacterSheetSchema = z
   .object({
@@ -270,6 +290,9 @@ export const CharacterSheetSchema = z
     race: z.string().optional(),
     background: z.string().optional(),
     level: z.number().int().positive().optional(),
+    personality: z.string().optional(),
+    tone: z.string().optional(),
+    plotPoints: z.array(CharacterPlotPointSchema).default([]),
     abilities: z.array(AbilityScoreSchema),
     skills: z.array(SkillSchema),
     techniques: z.array(TechniqueDefSchema).default([]),
@@ -278,6 +301,17 @@ export const CharacterSheetSchema = z
     armorClass: z.number().optional(),
   })
   .superRefine((sheet, ctx) => {
+    const plotPointIds = new Set<string>();
+    for (const point of sheet.plotPoints) {
+      if (plotPointIds.has(point.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate plot point id "${point.id}"`,
+        });
+      }
+      plotPointIds.add(point.id);
+    }
+
     const techniqueIds = new Set<string>();
     for (const technique of sheet.techniques) {
       if (techniqueIds.has(technique.id)) {

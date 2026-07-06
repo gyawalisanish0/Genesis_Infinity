@@ -57,6 +57,7 @@ async function main(): Promise<void> {
     corsOrigin,
     apiProviders,
     modelsDir: process.env.MODELS_DIR ?? "models",
+    experiencesDir: process.env.EXPERIENCES_DIR ?? "experiences",
     debug,
   });
 }

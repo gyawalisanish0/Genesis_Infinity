@@ -4,6 +4,27 @@ const PROFILES_KEY = "genesis-infinity-model-profiles";
 const el = {
   statusDot: document.getElementById("status-dot"),
   experienceName: document.getElementById("experience-name"),
+  experienceBtn: document.getElementById("experience-btn"),
+  experienceDialog: document.getElementById("experience-dialog"),
+  experienceDialogStatus: document.getElementById("experience-dialog-status"),
+  experienceDialogClose: document.getElementById("experience-dialog-close"),
+  experienceList: document.getElementById("experience-list"),
+  experienceImportForm: document.getElementById("experience-import-form"),
+  experienceZipInput: document.getElementById("experience-zip-input"),
+  experienceImportBtn: document.getElementById("experience-import-btn"),
+  createCharacterDialog: document.getElementById("create-character-dialog"),
+  createCharacterStatus: document.getElementById("create-character-status"),
+  createCharacterForm: document.getElementById("create-character-form"),
+  createCharacterCancel: document.getElementById("create-character-cancel"),
+  createCharacterSubmit: document.getElementById("create-character-submit"),
+  ccName: document.getElementById("cc-name"),
+  ccClass: document.getElementById("cc-class"),
+  ccRace: document.getElementById("cc-race"),
+  ccBackground: document.getElementById("cc-background"),
+  ccAbilityPoints: document.getElementById("cc-ability-points"),
+  ccAbilityList: document.getElementById("cc-ability-list"),
+  ccSkillPoints: document.getElementById("cc-skill-points"),
+  ccSkillList: document.getElementById("cc-skill-list"),
   messages: document.getElementById("messages"),
   composer: document.getElementById("composer"),
   input: document.getElementById("input"),
@@ -581,6 +602,226 @@ function openModelDialog() {
   el.modelDialog.showModal();
 }
 
+// --- Experience packages (see docs/BACKEND_ARCHITECTURE.md's Experience
+// Packages section): list installed packages, switch at runtime, import a
+// .zip. Mirrors the model dialog's saved-profiles list pattern.
+
+async function refreshExperiences() {
+  try {
+    const data = await apiFetch("/api/experiences");
+    renderExperiences(data);
+  } catch (error) {
+    el.experienceList.innerHTML = `<li class="empty">${error.message}</li>`;
+  }
+}
+
+function renderExperiences(data) {
+  el.experienceList.innerHTML = "";
+  if (data.packages.length === 0) {
+    el.experienceList.innerHTML = '<li class="empty">No packages installed.</li>';
+    return;
+  }
+  for (const pkg of data.packages) {
+    const li = document.createElement("li");
+    if (pkg.id === data.current.id) li.classList.add("selected");
+
+    const label = document.createElement("span");
+    label.className = "profile-label";
+    const name = document.createElement("span");
+    name.textContent = pkg.name + (pkg.version ? ` (v${pkg.version})` : "");
+    label.append(name);
+    if (pkg.description) {
+      const desc = document.createElement("span");
+      desc.className = "muted small";
+      desc.textContent = pkg.description;
+      label.append(desc);
+    }
+
+    if (pkg.customCharacter) {
+      const createBtn = document.createElement("button");
+      createBtn.type = "button";
+      createBtn.className = "profile-add";
+      createBtn.textContent = "+";
+      createBtn.setAttribute("aria-label", `Create a character for ${pkg.name}`);
+      createBtn.title = "Create a character";
+      createBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openCreateCharacterDialog(pkg);
+      });
+      li.append(label, createBtn);
+    } else {
+      li.append(label);
+    }
+
+    li.addEventListener("click", () => {
+      if (pkg.id !== data.current.id) selectExperience(pkg.id, pkg.name);
+    });
+    el.experienceList.appendChild(li);
+  }
+}
+
+// Shared by selectExperience and submitCreateCharacter below - both end
+// with the same "this is now the active Experience/player" UI update:
+// the old transcript and sidebar no longer describe anything real, so
+// the chat log clears; the composer stays gated on the rebuilt
+// scheduler's next your_turn (or on a model being loaded at all, if the
+// server was idle).
+function onExperienceSwitched(currentInfo, message) {
+  el.experienceName.textContent = currentInfo.name;
+  el.experienceDialog.close();
+  el.messages.innerHTML = "";
+  hasTurn = false;
+  updateComposerEnabled();
+  addMessage(message, "system");
+}
+
+async function selectExperience(id, name) {
+  el.experienceDialogStatus.textContent = `Switching to "${name}"...`;
+  try {
+    const result = await apiFetch("/api/experiences/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    el.experienceDialogStatus.textContent = " ";
+    onExperienceSwitched(result.current, `Switched to "${result.current.name}".`);
+  } catch (error) {
+    el.experienceDialogStatus.textContent = error.message;
+  }
+}
+
+async function importExperienceZip(file) {
+  el.experienceImportBtn.disabled = true;
+  el.experienceDialogStatus.textContent = `Importing "${file.name}"...`;
+  try {
+    const imported = await apiFetch("/api/experiences/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/zip" },
+      body: file,
+    });
+    el.experienceDialogStatus.textContent = `Imported "${imported.name}".`;
+    el.experienceZipInput.value = "";
+    await refreshExperiences();
+  } catch (error) {
+    el.experienceDialogStatus.textContent = error.message;
+  } finally {
+    el.experienceImportBtn.disabled = false;
+  }
+}
+
+// --- Create-a-character dialog: point-buy against a package's
+// customCharacter config (only present on packages that opt in - see
+// PackageInfo in src/packages/index.ts). Client-side pool enforcement is
+// purely for a responsive form; the server re-validates every allocation
+// authoritatively regardless.
+
+let createCharacterTarget = null; // the PackageInfo this dialog is currently building a character for
+
+function pointBuySpent(pointBuy, values) {
+  let spent = 0;
+  for (const value of Object.values(values)) spent += value - pointBuy.floor;
+  return spent;
+}
+
+function buildAllocationList(listEl, pointsLabelEl, defs, pointBuy, onValidityChange) {
+  listEl.innerHTML = "";
+  const values = {};
+  for (const def of defs) values[def.id] = pointBuy.floor;
+
+  const updateLabel = () => {
+    const spent = pointBuySpent(pointBuy, values);
+    pointsLabelEl.textContent = `${spent} / ${pointBuy.pool} points spent`;
+    pointsLabelEl.classList.toggle("over-budget", spent > pointBuy.pool);
+    onValidityChange(spent <= pointBuy.pool);
+  };
+
+  for (const def of defs) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    label.textContent = def.name;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = String(pointBuy.floor);
+    input.max = String(pointBuy.cap);
+    input.value = String(pointBuy.floor);
+    input.addEventListener("input", () => {
+      const parsed = Number(input.value);
+      values[def.id] = Number.isFinite(parsed) ? parsed : pointBuy.floor;
+      updateLabel();
+    });
+    label.append(input);
+    li.append(label);
+    listEl.appendChild(li);
+  }
+  updateLabel();
+  return values;
+}
+
+function openCreateCharacterDialog(pkg) {
+  createCharacterTarget = pkg;
+  el.createCharacterForm.reset();
+  el.createCharacterStatus.textContent = " ";
+
+  let abilitiesValid = true;
+  let skillsValid = true;
+  const updateSubmitEnabled = () => {
+    el.createCharacterSubmit.disabled = !(abilitiesValid && skillsValid);
+  };
+
+  el.ccAbilityValues = buildAllocationList(
+    el.ccAbilityList,
+    el.ccAbilityPoints,
+    pkg.customCharacter.abilities,
+    pkg.customCharacter.abilityPointBuy,
+    (ok) => {
+      abilitiesValid = ok;
+      updateSubmitEnabled();
+    },
+  );
+  el.ccSkillValues = buildAllocationList(
+    el.ccSkillList,
+    el.ccSkillPoints,
+    pkg.customCharacter.skills,
+    pkg.customCharacter.skillPointBuy,
+    (ok) => {
+      skillsValid = ok;
+      updateSubmitEnabled();
+    },
+  );
+
+  el.createCharacterDialog.showModal();
+}
+
+async function submitCreateCharacter() {
+  const name = el.ccName.value.trim();
+  if (!name) {
+    el.createCharacterStatus.textContent = "A name is required.";
+    return;
+  }
+  el.createCharacterSubmit.disabled = true;
+  el.createCharacterStatus.textContent = "Creating...";
+  try {
+    const result = await apiFetch(`/api/experiences/${encodeURIComponent(createCharacterTarget.id)}/characters`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        class: el.ccClass.value.trim() || undefined,
+        race: el.ccRace.value.trim() || undefined,
+        background: el.ccBackground.value.trim() || undefined,
+        abilities: el.ccAbilityValues,
+        skills: el.ccSkillValues,
+      }),
+    });
+    el.createCharacterDialog.close();
+    onExperienceSwitched(result.current, `Created "${result.character.name}" in "${result.current.name}".`);
+  } catch (error) {
+    el.createCharacterStatus.textContent = error.message;
+  } finally {
+    el.createCharacterSubmit.disabled = false;
+  }
+}
+
 function switchBackendTab(backend) {
   el.tabLocal.classList.toggle("active", backend === "llamaCpp");
   el.tabApi.classList.toggle("active", backend === "api");
@@ -729,6 +970,28 @@ async function unloadModel() {
 
 el.modelBtn.addEventListener("click", openModelDialog);
 el.modelDialogClose.addEventListener("click", () => el.modelDialog.close());
+
+el.experienceBtn.addEventListener("click", () => {
+  if (!connection) return;
+  refreshExperiences();
+  el.experienceDialog.showModal();
+});
+el.experienceDialogClose.addEventListener("click", () => el.experienceDialog.close());
+el.experienceImportForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const file = el.experienceZipInput.files?.[0];
+  if (!file) {
+    el.experienceDialogStatus.textContent = "Pick a .zip file first.";
+    return;
+  }
+  importExperienceZip(file);
+});
+
+el.createCharacterCancel.addEventListener("click", () => el.createCharacterDialog.close());
+el.createCharacterForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitCreateCharacter();
+});
 el.tabLocal.addEventListener("click", () => switchBackendTab("llamaCpp"));
 el.tabApi.addEventListener("click", () => switchBackendTab("api"));
 el.modelApiProvider.addEventListener("change", () => loadApiModelsForProvider(el.modelApiProvider.value));

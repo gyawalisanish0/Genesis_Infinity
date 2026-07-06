@@ -3,3 +3,4 @@ dist/
 *.sqlite
 *.sqlite3
 models/
+experiences/

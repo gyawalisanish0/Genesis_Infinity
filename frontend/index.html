@@ -11,7 +11,9 @@
     <header class="topbar">
       <div class="topbar-title">
         <span class="dot" id="status-dot"></span>
-        <span id="experience-name">Genesis Infinity</span>
+        <button id="experience-btn" class="experience-name-btn" title="Experiences">
+          <span id="experience-name">Genesis Infinity</span>
+        </button>
       </div>
       <div class="topbar-actions">
         <button id="model-btn" class="model-status-btn" title="Model settings">
@@ -88,6 +90,61 @@
       <div class="dialog-actions">
         <button type="button" id="settings-cancel">Cancel</button>
         <button type="submit">Connect</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="experience-dialog">
+    <h2>Experiences</h2>
+    <p class="muted small" id="experience-dialog-status">&nbsp;</p>
+
+    <h3>Installed</h3>
+    <ul id="experience-list" class="plain-list selectable"></ul>
+
+    <h3>Import a package</h3>
+    <p class="muted small">A .zip containing experience.json, world.json, and characters/.</p>
+    <form id="experience-import-form">
+      <input id="experience-zip-input" type="file" accept=".zip,application/zip" />
+      <div class="dialog-actions">
+        <button type="submit" id="experience-import-btn">Import</button>
+      </div>
+    </form>
+
+    <div class="dialog-actions">
+      <button type="button" id="experience-dialog-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="create-character-dialog">
+    <h2>Create a character</h2>
+    <p class="muted small" id="create-character-status">&nbsp;</p>
+    <form id="create-character-form">
+      <label>
+        Name
+        <input id="cc-name" type="text" required />
+      </label>
+      <label>
+        Class <span class="muted small">(optional)</span>
+        <input id="cc-class" type="text" />
+      </label>
+      <label>
+        Race <span class="muted small">(optional)</span>
+        <input id="cc-race" type="text" />
+      </label>
+      <label>
+        Background <span class="muted small">(optional)</span>
+        <input id="cc-background" type="text" />
+      </label>
+
+      <h3>Abilities <span class="muted small" id="cc-ability-points"></span></h3>
+      <ul id="cc-ability-list" class="plain-list"></ul>
+
+      <h3>Skills <span class="muted small" id="cc-skill-points"></span></h3>
+      <ul id="cc-skill-list" class="plain-list"></ul>
+
+      <div class="dialog-actions">
+        <button type="button" id="create-character-cancel">Cancel</button>
+        <button type="submit" id="create-character-submit">Create</button>
       </div>
     </form>
   </dialog>
