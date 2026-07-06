@@ -32,12 +32,28 @@ leaves the server. See `src/server/apiProviders.ts` for the full provider
 registry — adding a new provider there (base URL + a new key env var) makes it
 available to every deployment without any frontend changes.
 
-Optional: `EXPERIENCE_DIR` (defaults to `examples/goku-vs-venom`), `CHARACTER_ID`
-(defaults to `goku`), `MODELS_DIR` (defaults to `models` — where a
-frontend-picked local GGUF is cached; only one is kept on disk at a time),
-`DEBUG` (`true`/`1` to log each turn's input, tool calls, and final narration
-to this Space's container logs — the server equivalent of the CLI's `--debug`
-flag, useful for diagnosing what an API-backed model actually did on a turn).
+Optional: `EXPERIENCE_DIR` (the bootstrap Experience, defaults to
+`examples/goku-vs-venom`; its parent directory is always scanned as an
+Experience-package discovery root too — see below), `CHARACTER_ID`
+(defaults to `goku` — only used as a fallback if the selected Experience
+doesn't declare its own `playerCharacterId` and this id isn't found on
+its sheet), `MODELS_DIR` (defaults to `models` — where a frontend-picked
+local GGUF is cached; only one is kept on disk at a time), `DEBUG`
+(`true`/`1` to log each turn's input, tool calls, and final narration to
+this Space's container logs — the server equivalent of the CLI's
+`--debug` flag, useful for diagnosing what an API-backed model actually
+did on a turn).
+
+**Experience packages:** the frontend's Experiences dialog (opened from
+the topbar Experience name) lists every installed package, switches
+between them at runtime, and imports new ones from a `.zip` upload — see
+`docs/BACKEND_ARCHITECTURE.md`'s Experience Packages section. Imported
+packages are installed under `EXPERIENCES_DIR` (defaults to
+`experiences/`) — on this Space, that directory lives on the container's
+ephemeral filesystem, so **imports don't survive a Space restart/rebuild**
+unless persistent storage is configured for it. The bootstrap
+`EXPERIENCE_DIR` itself is unaffected by restarts either way, since it's
+part of the repo this Space syncs from.
 
 **Known limitation:** free-tier HF CPU Spaces can sleep after a period of
 inactivity, which works against "always-on" serving. If this becomes a
