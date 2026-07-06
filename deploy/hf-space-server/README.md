@@ -44,6 +44,14 @@ this Space's container logs — the server equivalent of the CLI's
 `--debug` flag, useful for diagnosing what an API-backed model actually
 did on a turn).
 
+A crashed turn (the model calling a tool in a way the schema allows but
+the engine didn't expect — e.g. a free-tier model skipping an optional
+parameter) is always logged to this Space's container logs with an
+`[error]` prefix, regardless of `DEBUG` — this is the one place a crash
+during an autonomous NPC turn is guaranteed to surface, since there may
+be no connected client at that moment for the frontend's own error
+bubble to reach.
+
 **Experience packages:** the frontend's Experiences dialog (opened from
 the topbar Experience name) lists every installed package, switches
 between them at runtime, and imports new ones from a `.zip` upload — see

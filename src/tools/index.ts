@@ -101,9 +101,19 @@ export function getCharacterSheetTool(
   return sheet;
 }
 
-/** Check tool: the most recent dtm events for this Experience. */
-export function getRecentDtmTool(ctx: ToolContext, params: { limit: number }): DtmEvent[] {
-  return ctx.dtm.recent(ctx.loaded.experience.id, params.limit);
+/**
+ * Check tool: the most recent dtm events for this Experience. `limit` is
+ * declared optional in the tool's JSON schema (no sensible one-size-fits-all
+ * required value), so a model omitting it is expected, valid input, not a
+ * malformed call — defaults to DEFAULT_RECENT_DTM_LIMIT rather than passing
+ * `undefined` through to dtm's `LIMIT ?` bind, which node:sqlite rejects
+ * outright ("Provided value cannot be bound to SQLite parameter 2"),
+ * observed live with a model that omitted it.
+ */
+const DEFAULT_RECENT_DTM_LIMIT = 20;
+
+export function getRecentDtmTool(ctx: ToolContext, params: { limit?: number }): DtmEvent[] {
+  return ctx.dtm.recent(ctx.loaded.experience.id, params.limit ?? DEFAULT_RECENT_DTM_LIMIT);
 }
 
 export interface SayResult {
