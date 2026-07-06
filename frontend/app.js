@@ -35,7 +35,6 @@ const el = {
   settingsCancel: document.getElementById("settings-cancel"),
   settingBaseUrl: document.getElementById("setting-base-url"),
   settingApiKey: document.getElementById("setting-api-key"),
-  settingCharacterId: document.getElementById("setting-character-id"),
   modelBtn: document.getElementById("model-btn"),
   modelDot: document.getElementById("model-dot"),
   modelStatusText: document.getElementById("model-status-text"),
@@ -62,6 +61,9 @@ const el = {
   modelApiNone: document.getElementById("model-api-none"),
   modelProfilesList: document.getElementById("model-profiles-list"),
   modelUnloadBtn: document.getElementById("model-unload-btn"),
+  characterBtn: document.getElementById("character-btn"),
+  characterDialog: document.getElementById("character-dialog"),
+  characterDialogClose: document.getElementById("character-dialog-close"),
   sidebarEmpty: document.getElementById("sidebar-empty"),
   sidebarContent: document.getElementById("sidebar-content"),
   charName: document.getElementById("char-name"),
@@ -75,7 +77,7 @@ const el = {
   othersList: document.getElementById("others-list"),
 };
 
-let connection = null; // { baseUrl, apiKey, characterId }
+let connection = null; // { baseUrl, apiKey }
 
 function loadConnection() {
   try {
@@ -207,7 +209,7 @@ function applyBackendStatus(status) {
   el.modelUnloadBtn.disabled = !isReady;
 
   if (isReady && !wasReady) {
-    apiFetch(`/api/scope?characterId=${encodeURIComponent(connection.characterId)}`)
+    apiFetch("/api/scope")
       .then(renderScope)
       .catch(() => {});
     addMessage(`Model ready: ${describeBackendStatus(status)}`, "system");
@@ -592,7 +594,6 @@ function openSettings() {
   if (connection) {
     el.settingBaseUrl.value = connection.baseUrl;
     el.settingApiKey.value = connection.apiKey ?? "";
-    el.settingCharacterId.value = connection.characterId;
   }
   el.settingsDialog.showModal();
 }
@@ -637,6 +638,8 @@ function renderExperiences(data) {
       label.append(desc);
     }
 
+    const topRow = document.createElement("div");
+    topRow.className = "profile-row";
     if (pkg.customCharacter) {
       const createBtn = document.createElement("button");
       createBtn.type = "button";
@@ -648,14 +651,39 @@ function renderExperiences(data) {
         event.stopPropagation();
         openCreateCharacterDialog(pkg);
       });
-      li.append(label, createBtn);
+      topRow.append(label, createBtn);
     } else {
-      li.append(label);
+      topRow.append(label);
     }
+    li.append(topRow);
 
     li.addEventListener("click", () => {
       if (pkg.id !== data.current.id) selectExperience(pkg.id, pkg.name);
     });
+
+    // "Play as" picker - lets the player choose which of this package's
+    // existing characters to control, instead of only ever getting
+    // whichever one the Experience/server resolves as the default.
+    if (pkg.characters.length > 0) {
+      const chipRow = document.createElement("div");
+      chipRow.className = "character-chip-row";
+      for (const character of pkg.characters) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "character-chip";
+        if (pkg.id === data.current.id && character.id === data.current.playerCharacterId) {
+          chip.classList.add("active");
+        }
+        chip.textContent = character.name;
+        chip.addEventListener("click", (event) => {
+          event.stopPropagation();
+          selectExperience(pkg.id, pkg.name, character.id);
+        });
+        chipRow.appendChild(chip);
+      }
+      li.appendChild(chipRow);
+    }
+
     el.experienceList.appendChild(li);
   }
 }
@@ -675,13 +703,13 @@ function onExperienceSwitched(currentInfo, message) {
   addMessage(message, "system");
 }
 
-async function selectExperience(id, name) {
+async function selectExperience(id, name, characterId) {
   el.experienceDialogStatus.textContent = `Switching to "${name}"...`;
   try {
     const result = await apiFetch("/api/experiences/select", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify(characterId ? { id, characterId } : { id }),
     });
     el.experienceDialogStatus.textContent = " ";
     onExperienceSwitched(result.current, `Switched to "${result.current.name}".`);
@@ -971,6 +999,9 @@ async function unloadModel() {
 el.modelBtn.addEventListener("click", openModelDialog);
 el.modelDialogClose.addEventListener("click", () => el.modelDialog.close());
 
+el.characterBtn.addEventListener("click", () => el.characterDialog.showModal());
+el.characterDialogClose.addEventListener("click", () => el.characterDialog.close());
+
 el.experienceBtn.addEventListener("click", () => {
   if (!connection) return;
   refreshExperiences();
@@ -1031,7 +1062,6 @@ el.settingsForm.addEventListener("submit", (event) => {
   connection = {
     baseUrl: el.settingBaseUrl.value.replace(/\/+$/, ""),
     apiKey: el.settingApiKey.value,
-    characterId: el.settingCharacterId.value.trim(),
   };
   saveConnection(connection);
   el.settingsDialog.close();

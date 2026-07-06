@@ -262,6 +262,11 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
    * never short-circuited by an id match the way select's is — a newly
    * written character file requires the fresh `loaded` this always takes.
    */
+  /** The `current` fields every /api/experiences* response echoes back — factored out so playerCharacterId isn't forgotten at a new call site. */
+  function currentInfo() {
+    return { id: current.id, name: current.name, playerCharacterId: current.playerCharacterId };
+  }
+
   function applyCurrentExperience(loaded: LoadedExperience, dir: string, playerCharacterId: string): void {
     current = {
       id: loaded.experience.id,
@@ -339,7 +344,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       if (req.method === "GET" && url.pathname === "/api/experiences") {
         const packages = await discoverPackages(experienceRoots);
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ current: { id: current.id, name: current.name }, packages }));
+        res.end(JSON.stringify({ current: currentInfo(), packages }));
         return;
       }
 
@@ -351,15 +356,27 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           res.end(JSON.stringify({ error: "A model switch is already in progress" }));
           return;
         }
-        const body = (await readJsonBody(req)) as { id?: unknown };
+        const body = (await readJsonBody(req)) as { id?: unknown; characterId?: unknown };
         if (typeof body.id !== "string" || body.id.trim() === "") {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Request body must be { id: string }" }));
+          res.end(JSON.stringify({ error: "Request body must be { id: string, characterId?: string }" }));
           return;
         }
-        if (body.id === current.id) {
+        if (body.characterId !== undefined && typeof body.characterId !== "string") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "characterId must be a string when provided" }));
+          return;
+        }
+        const requestedCharacterId = body.characterId;
+        // Nothing to do only when BOTH the Experience and the requested
+        // character (if any was named) already match current state - an
+        // explicit characterId for the already-selected Experience must
+        // still go through the reload below, since that's how a player
+        // switches which existing character they control without leaving
+        // the Experience.
+        if (body.id === current.id && (requestedCharacterId === undefined || requestedCharacterId === current.playerCharacterId)) {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ current: { id: current.id, name: current.name }, status }));
+          res.end(JSON.stringify({ current: currentInfo(), status }));
           return;
         }
         const packages = await discoverPackages(experienceRoots);
@@ -370,9 +387,20 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           return;
         }
         const loaded = await loadExperience(target.dir);
-        applyCurrentExperience(loaded, target.dir, resolvePlayerCharacterId(loaded, options.characterId));
+        let playerCharacterId: string;
+        if (requestedCharacterId !== undefined) {
+          if (!loaded.characters.some((c) => c.id === requestedCharacterId)) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: `Experience "${target.id}" has no character "${requestedCharacterId}"` }));
+            return;
+          }
+          playerCharacterId = requestedCharacterId;
+        } else {
+          playerCharacterId = resolvePlayerCharacterId(loaded, options.characterId);
+        }
+        applyCurrentExperience(loaded, target.dir, playerCharacterId);
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ current: { id: current.id, name: current.name }, status }));
+        res.end(JSON.stringify({ current: currentInfo(), status }));
         return;
       }
 
@@ -417,7 +445,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
           const reloaded = await loadExperience(target.dir);
           applyCurrentExperience(reloaded, target.dir, created.id);
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ current: { id: current.id, name: current.name }, character: created, status }));
+          res.end(JSON.stringify({ current: currentInfo(), character: created, status }));
         } catch (error) {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));

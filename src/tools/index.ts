@@ -674,6 +674,18 @@ export function checkAction(ctx: ToolContext, action: Action): ActionCheck {
       return checkUseTechnique(ctx, action);
     case "interact":
       return checkInteract(ctx, action);
+    default: {
+      // ai/'s handler builds `action` from the model's raw tool-call
+      // params via an unchecked cast (`params as object as Action`) - a
+      // model that doesn't strictly honor the action tool's oneOf/const
+      // schema (observed with at least one HF-router-hosted model) can
+      // hand this a `type` outside the three above. Without this branch
+      // the switch falls through and returns `undefined`, which crashes
+      // ai/index.ts's `if (!check.allowed)` with a TypeError instead of
+      // rejecting the action like any other invalid one.
+      const unknownType = (action as { type: string }).type;
+      return { allowed: false, reason: `Unknown action type "${unknownType}"` };
+    }
   }
 }
 
