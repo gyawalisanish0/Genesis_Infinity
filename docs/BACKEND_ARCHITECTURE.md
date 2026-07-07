@@ -1254,6 +1254,20 @@ rather than assumed:
   conditional. `dtm/`'s `turn.audited` event's `checked` field now
   accurately reflects whether the full audit actually ran, not just
   whether an action was attempted.
+- **Bounded narration generation** (`ai/index.ts`'s `MAX_NARRATION_TOKENS`,
+  default 700) — every narration-producing `prompt()` call passes a
+  `maxTokens` cap through the shared `LlmDriver.prompt` interface. This is
+  a *generation* bound (tokens the model emits), not a *context* bound
+  like the three above — its target is worst-case latency on a local CPU
+  model, where an unbounded runaway/looping narration burns hundreds of
+  tokens at a few tokens/sec with no natural stop. The cap is deliberately
+  generous: a normal turn's tool sequence plus a few-sentence beat lands
+  well under it, so it only ever bites a genuine runaway; a rare mid-loop
+  truncation still degrades gracefully via the existing
+  `isInvalidNarration` blank/garbled fallback. On the local backend
+  `maxTokens` bounds the whole `prompt()` call (tool rounds + narration,
+  since node-llama-cpp owns that loop); on the API backend it's a
+  per-request cap that effectively bounds the final narration round.
 
 **One unified `compactContext` pipeline, not two separate mechanisms.**
 Per-turn tool-result compaction and multi-turn summarization were

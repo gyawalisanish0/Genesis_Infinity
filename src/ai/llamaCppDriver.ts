@@ -71,9 +71,15 @@ class LlamaCppChatSession implements ChatDriverSession {
     this.onRelease = onRelease;
   }
 
-  async prompt(input: string, tools?: ToolDef[]): Promise<string> {
+  async prompt(input: string, tools?: ToolDef[], options?: { maxTokens?: number }): Promise<string> {
+    // maxTokens here bounds the whole prompt() call's generation - node-llama-cpp
+    // runs the tool-calling loop internally, so this budget is shared across
+    // tool-call rounds and the final narration (see llmDriver.ts). Kept generous
+    // upstream precisely so it only ever bites a runaway, never a normal turn's
+    // tool sequence.
+    const maxTokens = options?.maxTokens;
     if (!tools || tools.length === 0) {
-      return this.session.prompt(input);
+      return this.session.prompt(input, maxTokens !== undefined ? { maxTokens } : undefined);
     }
 
     const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
@@ -87,7 +93,7 @@ class LlamaCppChatSession implements ChatDriverSession {
         handler: tool.handler as never,
       });
     }
-    return this.session.prompt(input, { functions });
+    return this.session.prompt(input, { functions, ...(maxTokens !== undefined ? { maxTokens } : {}) });
   }
 
   async promptForJson<T>(input: string, schema: JsonSchema): Promise<T> {
