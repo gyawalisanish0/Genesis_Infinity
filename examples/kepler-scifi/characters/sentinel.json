@@ -1,0 +1,40 @@
+{
+  "id": "sentinel",
+  "name": "Sentinel Unit 7",
+  "class": "Security Drone",
+  "background": "Automated defense platform, last order never rescinded",
+  "level": 6,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 15 },
+    { "id": "dex", "name": "Dexterity", "score": 16 },
+    { "id": "con", "name": "Constitution", "score": 15 },
+    { "id": "int", "name": "Intelligence", "score": 8 },
+    { "id": "wis", "name": "Wisdom", "score": 12 },
+    { "id": "cha", "name": "Charisma", "score": 4 }
+  ],
+  "skills": [
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 8 },
+    { "id": "athletics", "name": "Athletics", "governingAbilityId": "str", "value": 6 },
+    { "id": "stealth", "name": "Stealth", "governingAbilityId": "dex", "value": 4 }
+  ],
+  "techniques": [
+    {
+      "id": "railgun-burst",
+      "name": "Railgun Burst",
+      "description": "A magnetically accelerated slug fired from the drone's dorsal rail.",
+      "effectId": "plasma-burn"
+    },
+    {
+      "id": "shock-prod",
+      "name": "Shock Prod",
+      "description": "An extended arc probe that discharges into a target at grappling range.",
+      "effectId": "emp-shock"
+    }
+  ],
+  "inventory": [],
+  "hitPoints": { "current": 65, "max": 65 },
+  "armorClass": 16,
+  "personality": "Not a personality — a protocol. Announces intrusions in a flat synthetic voice, offers a single warning, then enforces. Utterly literal.",
+  "tone": "Clipped machine cadence: threat classifications, countdowns, and warnings, nothing more.",
+  "plotPoints": []
+}

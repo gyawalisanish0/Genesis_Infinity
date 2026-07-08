@@ -1,0 +1,61 @@
+{
+  "id": "neon-debt-cyberpunk",
+  "name": "Neon Debt",
+  "version": "1.0.0",
+  "description": "Cyberpunk. The netrunner Nyx owes the wrong arcology a great deal of money, and tonight they've sent Kade to collect in person. A rain-slick chase through the Sector 7 sprawl. Original content.",
+  "author": "Genesis Infinity",
+  "mode": "single-player",
+  "playerCharacterId": "nyx",
+  "difficulty": { "defaultTier": "hard" },
+  "effects": [
+    {
+      "id": "ice-shock",
+      "name": "ICE Shock",
+      "description": "Black-ICE feedback lances back down the connection into the runner's skull.",
+      "severity": 3,
+      "currentHitPointsDelta": -12
+    },
+    {
+      "id": "reflex-jammed",
+      "name": "Reflex Jammed",
+      "description": "A scrambler spikes the target's wired reflexes, leaving them a half-second slow.",
+      "severity": 2,
+      "armorClassDelta": -3
+    },
+    {
+      "id": "smog-burn",
+      "name": "Smog Burn",
+      "description": "Acid smog off the industrial stacks scalds lungs and eyes.",
+      "severity": 2,
+      "currentHitPointsDelta": -5
+    }
+  ],
+  "items": [
+    {
+      "id": "stim-patch",
+      "name": "Stim Patch",
+      "description": "A dermal patch of combat stimulants — closes the gap between hurt and moving.",
+      "type": "consumable",
+      "healAmount": 25
+    },
+    {
+      "id": "subdermal-plating",
+      "name": "Subdermal Plating",
+      "description": "Ceramic weave grafted under the skin — turns blades and softens rounds.",
+      "type": "equipment",
+      "armorClassDelta": 3,
+      "maxHitPointsDelta": 10
+    },
+    {
+      "id": "mono-katana",
+      "name": "Monofilament Katana",
+      "description": "A blade honed to a single molecule's edge, humming faintly in the rain.",
+      "type": "equipment",
+      "armorClassDelta": 1
+    }
+  ],
+  "characters": [
+    { "characterId": "nyx", "startingNodeId": "neon-alley" },
+    { "characterId": "kade", "startingNodeId": "arcology-lobby" }
+  ]
+}

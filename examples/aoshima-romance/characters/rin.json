@@ -1,0 +1,48 @@
+{
+  "id": "rin",
+  "name": "Rin",
+  "class": "Art student",
+  "background": "Home for the summer, back where she grew up",
+  "level": 3,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 10 },
+    { "id": "dex", "name": "Dexterity", "score": 12 },
+    { "id": "con", "name": "Constitution", "score": 11 },
+    { "id": "int", "name": "Intelligence", "score": 14 },
+    { "id": "wis", "name": "Wisdom", "score": 13 },
+    { "id": "cha", "name": "Charisma", "score": 15 }
+  ],
+  "skills": [
+    { "id": "persuasion", "name": "Persuasion", "governingAbilityId": "cha", "value": 5 },
+    { "id": "insight", "name": "Insight", "governingAbilityId": "wis", "value": 6 },
+    { "id": "performance", "name": "Performance", "governingAbilityId": "cha", "value": 4 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 4 }
+  ],
+  "techniques": [
+    {
+      "id": "honest-word",
+      "name": "An Honest Word",
+      "description": "Setting the jokes aside and saying something true, however much it costs to say it."
+    },
+    {
+      "id": "shared-memory",
+      "name": "A Shared Memory",
+      "description": "Bringing up a small moment from years ago that only the two of them remember."
+    }
+  ],
+  "inventory": [
+    { "itemId": "paper-charm", "quantity": 1, "equipped": true },
+    { "itemId": "takoyaki", "quantity": 1 }
+  ],
+  "hitPoints": { "current": 30, "max": 30 },
+  "armorClass": 10,
+  "personality": "Warm and quick-witted on the outside, quietly terrified on the inside. Hides behind jokes when it matters most, but means every kind thing she says.",
+  "tone": "Bright and teasing, with the nervousness showing through whenever the conversation turns real.",
+  "plotPoints": [
+    {
+      "id": "last-lantern",
+      "description": "The final lanterns are being lit out on the pier — the festival, and the evening, are nearly over.",
+      "atUnit": 600
+    }
+  ]
+}

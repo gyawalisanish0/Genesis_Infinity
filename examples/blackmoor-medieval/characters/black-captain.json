@@ -1,0 +1,45 @@
+{
+  "id": "black-captain",
+  "name": "The Black Captain",
+  "class": "Sellsword Commander",
+  "race": "Human",
+  "background": "Leader of the free company that took the keep",
+  "level": 8,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 18 },
+    { "id": "dex", "name": "Dexterity", "score": 13 },
+    { "id": "con", "name": "Constitution", "score": 16 },
+    { "id": "int", "name": "Intelligence", "score": 13 },
+    { "id": "wis", "name": "Wisdom", "score": 12 },
+    { "id": "cha", "name": "Charisma", "score": 15 }
+  ],
+  "skills": [
+    { "id": "athletics", "name": "Athletics", "governingAbilityId": "str", "value": 9 },
+    { "id": "intimidation", "name": "Intimidation", "governingAbilityId": "cha", "value": 7 },
+    { "id": "deception", "name": "Deception", "governingAbilityId": "cha", "value": 5 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 5 }
+  ],
+  "techniques": [
+    {
+      "id": "cleave",
+      "name": "Cleave",
+      "description": "A heavy two-handed swing meant to hew straight through shield and man alike.",
+      "effectId": "wounded"
+    },
+    {
+      "id": "warhammer-crush",
+      "name": "Warhammer Crush",
+      "description": "An overhead hammer blow that caves armor and shatters what it covers.",
+      "effectId": "shield-broken"
+    }
+  ],
+  "inventory": [
+    { "itemId": "plate-harness", "quantity": 1, "equipped": true },
+    { "itemId": "health-potion", "quantity": 1 }
+  ],
+  "hitPoints": { "current": 85, "max": 85 },
+  "armorClass": 16,
+  "personality": "Pragmatic and cold, not a monster — he took the keep for coin and would sell it back for more. Respects a real fighter and despises a wasted life, including his own men's.",
+  "tone": "Even, confident, faintly amused; the calm of a man who has done this many times.",
+  "plotPoints": []
+}

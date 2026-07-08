@@ -1,0 +1,63 @@
+{
+  "id": "sector-7",
+  "name": "Sector 7 Sprawl",
+  "width": 3,
+  "height": 3,
+  "regions": [
+    {
+      "id": "the-sprawl",
+      "position": { "x": 1, "y": 1 },
+      "name": "The Sprawl",
+      "description": "A canyon of megatowers under permanent rain, lit by a thousand holo-signs. Steam, noise, and crowds that part for no one — and above it all, the arcology's white spire.",
+      "worldType": "semi-open",
+      "environmentalCodes": [
+        {
+          "category": "lighting",
+          "value": "neon",
+          "severity": 1,
+          "mechanical": false,
+          "description": "Everything drowned in shifting neon and sign-glare — bright, and nowhere truly lit."
+        }
+      ],
+      "nodes": [
+        {
+          "id": "neon-alley",
+          "name": "Neon Alley",
+          "description": "A dripping back-alley of noodle vendors and data-fences, thick with acid smog off the stacks. A ladder climbs toward the night market.",
+          "type": "alley",
+          "localPosition": { "x": 0, "y": 0 },
+          "environmentalCodes": [
+            {
+              "category": "hazard",
+              "value": "acid-smog",
+              "severity": 2,
+              "mechanical": true,
+              "effectId": "smog-burn",
+              "description": "Chemical smog pools in the alley — it burns to breathe for long."
+            }
+          ],
+          "connections": [{ "targetNodeId": "night-market" }]
+        },
+        {
+          "id": "night-market",
+          "name": "The Night Market",
+          "description": "A heaving bazaar of chrome, chipware, and stolen goods under tarps and strung lights. Easy to disappear into, easy to be cornered in.",
+          "type": "market",
+          "localPosition": { "x": 1, "y": 0 },
+          "connections": [
+            { "targetNodeId": "neon-alley" },
+            { "targetNodeId": "arcology-lobby" }
+          ]
+        },
+        {
+          "id": "arcology-lobby",
+          "name": "Arcology Lobby",
+          "description": "The cold marble threshold of the corporate spire — mirror-glass, silent guards, and the front desk Nyx's debt is owed to. Kade waits here.",
+          "type": "lobby",
+          "localPosition": { "x": 2, "y": 0 },
+          "connections": [{ "targetNodeId": "night-market" }]
+        }
+      ]
+    }
+  ]
+}

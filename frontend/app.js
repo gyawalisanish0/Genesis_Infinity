@@ -144,6 +144,11 @@ function setStatus(state) {
 let selectedRepo = null;
 let statusPollTimer = null;
 let wasReady = false;
+// Set when the active Experience changes so the next "ready" status poll
+// refetches the character panel - the panel is otherwise only refreshed on
+// the not-ready->ready edge, which a same-model Experience switch (whose
+// engine rebuild can finish inside one 3s poll interval) slips right past.
+let scopeStale = false;
 let modelSwitchInFlight = false;
 let pendingLocalRepo = null; // { repoId, filename } set right before a llamaCpp switch is requested
 let autoOpenedModelDialog = false; // reset per connect() - guides a fresh connection straight to model selection
@@ -209,12 +214,21 @@ function applyBackendStatus(status) {
   el.modelUnloadBtn.disabled = !isReady;
 
   if (isReady && !wasReady) {
-    apiFetch("/api/scope")
-      .then(renderScope)
-      .catch(() => {});
     addMessage(`Model ready: ${describeBackendStatus(status)}`, "system");
     recordProfileFromStatus(status);
     connectEventStream();
+    scopeStale = true;
+  }
+  // Refetch the character panel on the ready edge (above) OR after an
+  // Experience switch (scopeStale) - the switch keeps the same loaded model
+  // so it never crosses the ready edge, yet the scope is now a different
+  // character's. Gated on isReady because the engine rebuild reports
+  // "starting" until done, during which GET /api/scope 409s.
+  if (isReady && scopeStale) {
+    scopeStale = false;
+    apiFetch("/api/scope")
+      .then(renderScope)
+      .catch(() => {});
   }
   wasReady = isReady;
   renderProfiles(status);
@@ -688,6 +702,14 @@ function renderExperiences(data) {
   }
 }
 
+// Returns the character panel to its pre-scope empty state - used on an
+// Experience switch so the previous character's stats don't linger while the
+// new engine rebuilds and its scope is refetched (see scopeStale).
+function resetCharacterPanel() {
+  el.sidebarContent.classList.add("hidden");
+  el.sidebarEmpty.classList.remove("hidden");
+}
+
 // Shared by selectExperience and submitCreateCharacter below - both end
 // with the same "this is now the active Experience/player" UI update:
 // the old transcript and sidebar no longer describe anything real, so
@@ -701,6 +723,11 @@ function onExperienceSwitched(currentInfo, message) {
   hasTurn = false;
   updateComposerEnabled();
   addMessage(message, "system");
+  // The new Experience is a different character/world; clear the stale panel
+  // now and flag the next ready poll to refetch it (a same-model switch never
+  // crosses applyBackendStatus's ready edge on its own).
+  resetCharacterPanel();
+  scopeStale = true;
 }
 
 async function selectExperience(id, name, characterId) {

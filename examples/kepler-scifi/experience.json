@@ -1,0 +1,55 @@
+{
+  "id": "kepler-scifi",
+  "name": "Derelict: Kepler Station",
+  "version": "1.0.0",
+  "description": "Sci-fi. The salvage engineer Vega boards a dead orbital station to recover its reactor logs — and finds Sentinel Unit 7, a security drone still running its last order to kill intruders. Original content.",
+  "author": "Genesis Infinity",
+  "mode": "single-player",
+  "playerCharacterId": "vega",
+  "difficulty": { "defaultTier": "hard" },
+  "effects": [
+    {
+      "id": "emp-shock",
+      "name": "EMP Shock",
+      "description": "An electromagnetic pulse scrambles augments and reflexes.",
+      "severity": 3,
+      "armorClassDelta": -3
+    },
+    {
+      "id": "plasma-burn",
+      "name": "Plasma Burn",
+      "description": "A cutting torch or drone bolt sears through the suit.",
+      "severity": 3,
+      "currentHitPointsDelta": -14
+    },
+    {
+      "id": "irradiated",
+      "name": "Irradiated",
+      "description": "A dose of hard radiation from the failing reactor core.",
+      "severity": 4,
+      "currentHitPointsDelta": -8,
+      "maxHitPointsDelta": -5
+    }
+  ],
+  "items": [
+    {
+      "id": "med-injector",
+      "name": "Med-Injector",
+      "description": "An auto-injector of trauma foam and stimulants that seals wounds fast.",
+      "type": "consumable",
+      "healAmount": 30
+    },
+    {
+      "id": "eva-suit",
+      "name": "EVA Suit",
+      "description": "A reinforced vacuum suit — heavy, but it turns shrapnel and holds pressure.",
+      "type": "equipment",
+      "armorClassDelta": 2,
+      "maxHitPointsDelta": 10
+    }
+  ],
+  "characters": [
+    { "characterId": "vega", "startingNodeId": "docking-ring" },
+    { "characterId": "sentinel", "startingNodeId": "corridor-c" }
+  ]
+}

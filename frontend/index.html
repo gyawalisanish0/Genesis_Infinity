@@ -3,7 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Genesis Infinity</title>
+  <title>Genesis Infinity — Author the world. The engine plays it.</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%99%BE%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,8 +15,9 @@
     <header class="topbar">
       <div class="topbar-title">
         <span class="dot" id="status-dot"></span>
+        <span class="brandmark" aria-label="Genesis Infinity">GENES<i class="gi">I</i>S&nbsp;<i class="gi">I</i>NF<i class="gi">I</i>N<i class="gi">I</i>TY</span>
         <button id="experience-btn" class="experience-name-btn" title="Experiences">
-          <span id="experience-name">Genesis Infinity</span>
+          <span id="experience-name">Not connected</span>
         </button>
       </div>
       <div class="topbar-actions">
@@ -28,6 +33,12 @@
       <section class="chat">
         <div class="messages" id="messages"></div>
         <form class="composer" id="composer">
+          <button type="button" id="character-btn" class="composer-icon-btn" title="Character" aria-label="Character info">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path>
+            </svg>
+          </button>
           <input
             id="input"
             type="text"
@@ -39,13 +50,6 @@
         </form>
       </section>
     </main>
-
-    <button id="character-btn" class="fab-btn" title="Character" aria-label="Character info">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="8" r="4"></circle>
-        <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path>
-      </svg>
-    </button>
   </div>
 
   <dialog id="character-dialog">

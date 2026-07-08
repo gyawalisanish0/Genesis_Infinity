@@ -6,13 +6,18 @@
   --text-secondary: #c3c2b7;
   --text-muted: #898781;
   --border: rgba(255, 255, 255, 0.1);
-  --accent: #3987e5;
+  /* Brand identity: a violet->cyan cosmic gradient (see docs/BRAND.md). */
+  --brand-violet: #7c5cff;
+  --brand-cyan: #22d3ee;
+  --brand-gradient: linear-gradient(180deg, var(--brand-violet), var(--brand-cyan));
+  --accent: var(--brand-violet); /* existing components reference --accent */
   --accent-ink: #ffffff;
   --status-good: #0ca30c;
   --status-warning: #fab219;
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
   --radius: 10px;
+  --font-display: "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 * {
@@ -56,6 +61,46 @@ body {
   align-items: center;
   gap: 8px;
   font-weight: 600;
+  min-width: 0;
+}
+
+/* Brand wordmark: the full name in the display face, with every "I" rendered
+   as a vertical gradient glyph (see docs/BRAND.md). The letters stay real
+   text (accessible, aria-labelled) — the glyph is pure styling. */
+.brandmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.brandmark .gi {
+  font-style: normal;
+  display: inline-block;
+  transform: scaleY(1.18); /* stretch the I into a pillar */
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* On narrow screens the wordmark collapses to the infinity logomark so the
+   current-experience name still fits. */
+@media (max-width: 560px) {
+  .brandmark {
+    font-size: 0;
+  }
+  .brandmark::before {
+    content: "\221E"; /* infinity */
+    font-size: 20px;
+    background: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
 }
 
 .dot {
@@ -91,11 +136,15 @@ body {
 .experience-name-btn {
   background: transparent;
   border: none;
-  color: inherit;
+  color: var(--text-secondary);
   font: inherit;
-  font-weight: inherit;
+  font-weight: 500;
   padding: 0;
   cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .experience-name-btn:hover {
@@ -333,31 +382,23 @@ body {
   color: var(--text-muted);
 }
 
-/* Floating character-info button, bottom-left - the icon that opens
-   #character-dialog above, replacing the old always-visible sidebar so
-   the chat gets full width on every screen size. */
-.fab-btn {
-  position: fixed;
-  left: 16px;
-  /* Clears the composer bar's own height (padding + input) rather than
-     sitting at the raw viewport edge, so it doesn't overlap the input. */
-  bottom: 78px;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--surface-raised);
+/* Character-info button, sits inside the composer bar to the left of the
+   input - opens #character-dialog. Overrides .composer button's accent
+   fill so it reads as a neutral icon affordance next to the Send CTA. */
+.composer-icon-btn {
+  flex-shrink: 0;
+  width: 44px;
+  padding: 0;
+  background: var(--surface-raised) !important;
   border: 1px solid var(--border);
-  color: var(--text-secondary);
+  color: var(--text-secondary) !important;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-  z-index: 10;
 }
 
-.fab-btn:hover {
-  color: var(--text-primary);
+.composer-icon-btn:hover:not(:disabled) {
+  color: var(--text-primary) !important;
   border-color: var(--accent);
 }
 

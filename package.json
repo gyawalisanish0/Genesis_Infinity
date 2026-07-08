@@ -4,6 +4,8 @@
   "description": "AI RPG engine.",
   "type": "module",
   "private": true,
+  "license": "MIT",
+  "author": "Sanish Gyawali",
   "scripts": {
     "play": "tsx src/io/cli.ts",
     "serve": "tsx src/server/cli.ts",

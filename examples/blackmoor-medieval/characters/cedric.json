@@ -1,0 +1,52 @@
+{
+  "id": "cedric",
+  "name": "Sir Cedric",
+  "class": "Knight",
+  "race": "Human",
+  "background": "Sworn defender of Blackmoor, last of its garrison",
+  "level": 7,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 17 },
+    { "id": "dex", "name": "Dexterity", "score": 12 },
+    { "id": "con", "name": "Constitution", "score": 16 },
+    { "id": "int", "name": "Intelligence", "score": 11 },
+    { "id": "wis", "name": "Wisdom", "score": 13 },
+    { "id": "cha", "name": "Charisma", "score": 14 }
+  ],
+  "skills": [
+    { "id": "athletics", "name": "Athletics", "governingAbilityId": "str", "value": 8 },
+    { "id": "intimidation", "name": "Intimidation", "governingAbilityId": "cha", "value": 5 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 5 },
+    { "id": "persuasion", "name": "Persuasion", "governingAbilityId": "cha", "value": 4 }
+  ],
+  "techniques": [
+    {
+      "id": "shield-bash",
+      "name": "Shield Bash",
+      "description": "A driving blow with the shield rim to stagger a foe and break their guard.",
+      "effectId": "shield-broken"
+    },
+    {
+      "id": "riposte",
+      "name": "Riposte",
+      "description": "A parry turned instantly into a counter-thrust through the opening.",
+      "effectId": "wounded"
+    }
+  ],
+  "inventory": [
+    { "itemId": "plate-harness", "quantity": 1, "equipped": true },
+    { "itemId": "kite-shield", "quantity": 1, "equipped": true },
+    { "itemId": "healers-salve", "quantity": 2 }
+  ],
+  "hitPoints": { "current": 75, "max": 75 },
+  "armorClass": 15,
+  "personality": "Dutiful to a fault, weary, and unbroken. Would rather die at his post than abandon it, but is not too proud to parley if it might spare the wounded still inside.",
+  "tone": "Formal and plainspoken, the courtesy of a tired man who still means every word of his oath.",
+  "plotPoints": [
+    {
+      "id": "gatehouse-collapse",
+      "description": "The burning gatehouse groans — Cedric knows it will come down soon, sealing the ward for good.",
+      "atUnit": 450
+    }
+  ]
+}

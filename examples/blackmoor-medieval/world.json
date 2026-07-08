@@ -1,0 +1,63 @@
+{
+  "id": "blackmoor-keep",
+  "name": "Blackmoor Keep",
+  "width": 3,
+  "height": 3,
+  "regions": [
+    {
+      "id": "the-keep",
+      "position": { "x": 1, "y": 1 },
+      "name": "Blackmoor Keep",
+      "description": "A grim border fortress taken by night. Torches gutter in the wind, the dead lie where they fell, and rain hisses on hot stone where the gatehouse burns.",
+      "worldType": "narrative-bound",
+      "environmentalCodes": [
+        {
+          "category": "weather",
+          "value": "rain",
+          "severity": 1,
+          "mechanical": false,
+          "description": "A cold, steady rain slicks the flagstones and the blades."
+        }
+      ],
+      "nodes": [
+        {
+          "id": "inner-ward",
+          "name": "The Inner Ward",
+          "description": "A cramped courtyard between the walls, littered with broken siege gear. The keep's great hall lies through an archway; the gatehouse smokes behind.",
+          "type": "courtyard",
+          "localPosition": { "x": 0, "y": 0 },
+          "connections": [
+            { "targetNodeId": "keep-hall" },
+            { "targetNodeId": "burning-gatehouse" }
+          ]
+        },
+        {
+          "id": "keep-hall",
+          "name": "The Great Hall",
+          "description": "A long stone hall of overturned benches and a cold hearth. The Black Captain has made it his seat, and the way out is the way you came.",
+          "type": "hall",
+          "localPosition": { "x": 1, "y": 0 },
+          "connections": [{ "targetNodeId": "inner-ward" }]
+        },
+        {
+          "id": "burning-gatehouse",
+          "name": "The Burning Gatehouse",
+          "description": "The gate is aflame, its timbers roaring and thick with smoke. A fallen portcullis blocks all but a narrow, choking path beneath.",
+          "type": "gatehouse",
+          "localPosition": { "x": 0, "y": 1 },
+          "environmentalCodes": [
+            {
+              "category": "hazard",
+              "value": "smoke",
+              "severity": 2,
+              "mechanical": true,
+              "effectId": "smoke-choked",
+              "description": "Choking black smoke fills the gatehouse — no one lingers here and breathes easy."
+            }
+          ],
+          "connections": [{ "targetNodeId": "inner-ward" }]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "id": "haru",
+  "name": "Haru",
+  "class": "Lighthouse keeper's apprentice",
+  "background": "Never left Aoshima, and never quite minded",
+  "level": 3,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 13 },
+    { "id": "dex", "name": "Dexterity", "score": 12 },
+    { "id": "con", "name": "Constitution", "score": 13 },
+    { "id": "int", "name": "Intelligence", "score": 12 },
+    { "id": "wis", "name": "Wisdom", "score": 15 },
+    { "id": "cha", "name": "Charisma", "score": 13 }
+  ],
+  "skills": [
+    { "id": "insight", "name": "Insight", "governingAbilityId": "wis", "value": 6 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 5 },
+    { "id": "persuasion", "name": "Persuasion", "governingAbilityId": "cha", "value": 4 },
+    { "id": "animal-handling", "name": "Animal Handling", "governingAbilityId": "wis", "value": 4 }
+  ],
+  "techniques": [
+    {
+      "id": "patient-question",
+      "name": "A Patient Question",
+      "description": "Asking the gentle, unhurried question that gives the other person room to finally answer."
+    }
+  ],
+  "inventory": [
+    { "itemId": "takoyaki", "quantity": 1 }
+  ],
+  "hitPoints": { "current": 32, "max": 32 },
+  "armorClass": 10,
+  "personality": "Steady, observant, and unhurried — the kind of person who notices what you don't say. Has been waiting a long time without ever pushing.",
+  "tone": "Calm and gentle, with a slow smile in it; says less than he means and means all of it.",
+  "plotPoints": []
+}

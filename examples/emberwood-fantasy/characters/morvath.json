@@ -1,0 +1,44 @@
+{
+  "id": "morvath",
+  "name": "Morvath",
+  "class": "Hex-Witch",
+  "race": "Human",
+  "background": "Keeper of the fallen star",
+  "level": 7,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 10 },
+    { "id": "dex", "name": "Dexterity", "score": 13 },
+    { "id": "con", "name": "Constitution", "score": 14 },
+    { "id": "int", "name": "Intelligence", "score": 15 },
+    { "id": "wis", "name": "Wisdom", "score": 17 },
+    { "id": "cha", "name": "Charisma", "score": 15 }
+  ],
+  "skills": [
+    { "id": "arcana", "name": "Arcana", "governingAbilityId": "int", "value": 8 },
+    { "id": "nature", "name": "Nature", "governingAbilityId": "int", "value": 7 },
+    { "id": "insight", "name": "Insight", "governingAbilityId": "wis", "value": 7 },
+    { "id": "intimidation", "name": "Intimidation", "governingAbilityId": "cha", "value": 6 }
+  ],
+  "techniques": [
+    {
+      "id": "witch-hex",
+      "name": "Witch's Hex",
+      "description": "A muttered curse that weighs down a victim's limbs and luck alike.",
+      "effectId": "hexed"
+    },
+    {
+      "id": "bramble-snare",
+      "name": "Bramble Snare",
+      "description": "Roots erupt from the scorched earth to lash a target's ankles and drag them to the shrine.",
+      "relocatesToTarget": true
+    }
+  ],
+  "inventory": [
+    { "itemId": "health-potion", "quantity": 2 }
+  ],
+  "hitPoints": { "current": 55, "max": 55 },
+  "armorClass": 13,
+  "personality": "Guarded and grieving, not cruel — she has kept the fallen star alone for years and mistrusts anyone drawn to its light. Bargains before she curses.",
+  "tone": "Low and deliberate, laced with old sorrow and older warnings.",
+  "plotPoints": []
+}

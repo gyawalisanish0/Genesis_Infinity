@@ -1,0 +1,63 @@
+{
+  "id": "the-emberwood",
+  "name": "The Emberwood",
+  "width": 3,
+  "height": 3,
+  "regions": [
+    {
+      "id": "burning-wood",
+      "position": { "x": 1, "y": 1 },
+      "name": "The Burning Wood",
+      "description": "An ancient forest lit from below by veins of buried starfire. The air smells of hot pine, and embers drift upward between the trunks like slow orange snow.",
+      "worldType": "semi-open",
+      "environmentalCodes": [
+        {
+          "category": "lighting",
+          "value": "emberglow",
+          "severity": 1,
+          "mechanical": false,
+          "description": "A warm underlight from the buried star — enough to see by, all wrong shadows."
+        }
+      ],
+      "nodes": [
+        {
+          "id": "forest-path",
+          "name": "The Forest Path",
+          "description": "A root-tangled trail winding between smoldering trunks. The glow deepens toward a clearing ahead.",
+          "type": "trail",
+          "localPosition": { "x": 0, "y": 0 },
+          "connections": [{ "targetNodeId": "ember-clearing" }]
+        },
+        {
+          "id": "ember-clearing",
+          "name": "The Ember Clearing",
+          "description": "A wide hollow where the buried starfire breaks the surface in glowing seams. The ruined shrine stands at its far edge.",
+          "type": "clearing",
+          "localPosition": { "x": 1, "y": 0 },
+          "connections": [
+            { "targetNodeId": "forest-path" },
+            { "targetNodeId": "ruined-shrine" }
+          ]
+        },
+        {
+          "id": "ruined-shrine",
+          "name": "The Ruined Shrine",
+          "description": "A collapsed stone sanctuary half-swallowed by fire-blackened roots. The canopy above still burns, raining cinders on anyone below.",
+          "type": "ruin",
+          "localPosition": { "x": 2, "y": 0 },
+          "environmentalCodes": [
+            {
+              "category": "hazard",
+              "value": "falling-embers",
+              "severity": 2,
+              "mechanical": true,
+              "effectId": "emberfall-burn",
+              "description": "The burning canopy sheds cinders on anyone who lingers beneath it."
+            }
+          ],
+          "connections": [{ "targetNodeId": "ember-clearing" }]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "id": "emberwood-fantasy",
+  "name": "The Emberwood",
+  "version": "1.0.0",
+  "description": "High fantasy. A forest where a fallen star still burns underground — the apprentice Aldric follows its light to the ruined shrine, where the hex-witch Morvath is waiting. Original content.",
+  "author": "Genesis Infinity",
+  "mode": "single-player",
+  "playerCharacterId": "aldric",
+  "effects": [
+    {
+      "id": "scorched",
+      "name": "Scorched",
+      "description": "Seared by a gout of conjured flame.",
+      "severity": 3,
+      "currentHitPointsDelta": -12
+    },
+    {
+      "id": "hexed",
+      "name": "Hexed",
+      "description": "A witch's curse clings and drags at every motion.",
+      "severity": 2,
+      "armorClassDelta": -2,
+      "maxHitPointsDelta": -5
+    },
+    {
+      "id": "emberfall-burn",
+      "name": "Emberfall Burn",
+      "description": "Falling cinders from the burning canopy scald exposed skin.",
+      "severity": 2,
+      "currentHitPointsDelta": -6
+    }
+  ],
+  "items": [
+    {
+      "id": "mana-draught",
+      "name": "Mana Draught",
+      "description": "A cordial of steeped starflower that eases wounds and steadies the casting hand.",
+      "type": "consumable",
+      "healAmount": 30
+    },
+    {
+      "id": "warded-cloak",
+      "name": "Warded Cloak",
+      "description": "A traveling cloak stitched with protective sigils that turn aside stray magic.",
+      "type": "equipment",
+      "armorClassDelta": 2
+    }
+  ],
+  "characters": [
+    { "characterId": "aldric", "startingNodeId": "forest-path" },
+    { "characterId": "morvath", "startingNodeId": "ruined-shrine" }
+  ]
+}

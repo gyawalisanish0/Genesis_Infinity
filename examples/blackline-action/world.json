@@ -1,0 +1,53 @@
+{
+  "id": "meridian-tower",
+  "name": "Meridian Tower",
+  "width": 3,
+  "height": 3,
+  "regions": [
+    {
+      "id": "upper-floors",
+      "position": { "x": 1, "y": 1 },
+      "name": "Upper Floors",
+      "description": "The top three floors of a glass corporate spire, sealed for the night. Rain streaks the windows and the city glitters forty stories down.",
+      "worldType": "semi-open",
+      "environmentalCodes": [
+        {
+          "category": "weather",
+          "value": "storm",
+          "severity": 2,
+          "mechanical": false,
+          "description": "A hard rain drums on the glass — cover for noise, murder on grip."
+        }
+      ],
+      "nodes": [
+        {
+          "id": "rooftop-helipad",
+          "name": "Rooftop Helipad",
+          "description": "A wind-scoured landing pad ringed by red guide lights. A maintenance hatch drops into the building; the executive floor is one level down.",
+          "type": "rooftop",
+          "localPosition": { "x": 0, "y": 0 },
+          "connections": [{ "targetNodeId": "executive-floor" }]
+        },
+        {
+          "id": "executive-floor",
+          "name": "Executive Floor",
+          "description": "Hushed carpet, dark wood, and a wall of monitors at the security desk. Corner offices flank a corridor that runs to the vault stair.",
+          "type": "interior",
+          "localPosition": { "x": 0, "y": 1 },
+          "connections": [
+            { "targetNodeId": "rooftop-helipad" },
+            { "targetNodeId": "server-vault" }
+          ]
+        },
+        {
+          "id": "server-vault",
+          "name": "Server Vault",
+          "description": "A cold, humming room of blade servers behind a biometric door. The data Kestrel came for lives here — if she can reach the terminal.",
+          "type": "vault",
+          "localPosition": { "x": 0, "y": 2 },
+          "connections": [{ "targetNodeId": "executive-floor" }]
+        }
+      ]
+    }
+  ]
+}
