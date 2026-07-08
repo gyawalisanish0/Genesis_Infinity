@@ -350,6 +350,18 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
   const SUBBLOCKS_PER_BLOCK = 10;
   const BLOCK_TARGET_WORDS = 75;
 
+  // A generous safety bound on a single turn's generation, not a tight
+  // per-turn budget. Unbounded generation is the worst-case latency spike
+  // on a local (CPU) model - a runaway or looping narration can burn
+  // hundreds of tokens at a few tokens/sec. A normal turn's tool sequence
+  // plus a few-sentence combat beat lands well under this, so it only ever
+  // bites a genuine runaway; if it ever does truncate, ai/'s existing
+  // empty/garbled-narration fallback catches it. Passed to every
+  // narration-producing prompt() below (see llmDriver.ts's maxTokens). A
+  // fixed constant for now - could become an Experience/config field if a
+  // per-Experience narration length ever needs tuning.
+  const MAX_NARRATION_TOKENS = 700;
+
   // Per-character narrative session pool. `resident` holds whichever
   // characters currently have a live driver session, bounded to
   // options.maxResidentNarrativeSessions (see llamaCppDriver.ts's bounded
@@ -663,7 +675,7 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
       const state = await resolveSession(characterId, turnTimestamp);
       const session = state.session;
 
-      let { reasoning, narration } = extractReasoning(await session.prompt(input, tools));
+      let { reasoning, narration } = extractReasoning(await session.prompt(input, tools, { maxTokens: MAX_NARRATION_TOKENS }));
 
       const actionCalls = turnToolCalls.filter((call) => call.name === "action");
       let auditResult = { consistent: true } as Awaited<ReturnType<NarrationAuditor["audit"]>>;
@@ -716,7 +728,9 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
           ].join("\n");
           // No `tools` here — this must not re-trigger tool calls and
           // re-apply state a second time, only regenerate the description.
-          ({ reasoning, narration } = extractReasoning(await session.prompt(correction)));
+          ({ reasoning, narration } = extractReasoning(
+            await session.prompt(correction, undefined, { maxTokens: MAX_NARRATION_TOKENS }),
+          ));
           auditResult = isInvalidNarration(narration)
             ? { consistent: false, contradiction: invalidReason }
             : await auditOrTrust();
@@ -733,6 +747,8 @@ export async function createAiSession(options: AiSessionOptions): Promise<AiSess
         ({ reasoning, narration } = extractReasoning(
           await session.prompt(
             "Your last reply had no narration text (or wasn't valid prose). Describe what happened in plain text, with no tool-call syntax.",
+            undefined,
+            { maxTokens: MAX_NARRATION_TOKENS },
           ),
         ));
         if (isInvalidNarration(narration)) {

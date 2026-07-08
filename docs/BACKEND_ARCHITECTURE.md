@@ -573,15 +573,23 @@ different cost profile per backend:
   Infinity` — nothing is ever evicted.
 - **Local llama.cpp backend** (`llamaCppDriver.ts`) — bounded. Each
   `LlamaContextSequence` is a real, memory-backed KV cache; the driver
-  now reserves `3 + narrativeWorkerSequences` sequences instead of a flat
-  4 — 3 permanent (rules validator, narration auditor, summarizer, handed
-  out via the unchanged `createChatSession`, never released) plus a
-  `narrativeWorkerSequences`-sized pool (`LlamaCppBackendConfig`,
-  default `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2`) reused across
-  characters via the new `createNarrativeSession`. Since each sequence
-  gets its own full `contextSize`-sized KV cache (not divided), the
-  default raises the backend's reserved memory by ~25% (5 sequences
-  instead of 4).
+  reserves `3 + narrativeWorkerSequences` sequences — 3 permanent (rules
+  validator, narration auditor, summarizer, handed out via the unchanged
+  `createChatSession`, never released) plus a `narrativeWorkerSequences`-sized
+  pool (`LlamaCppBackendConfig`, default `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2`)
+  reused across characters via the new `createNarrativeSession`. Each
+  sequence gets its own full `contextSize`-sized KV cache (not divided),
+  so those two groups live on **two separately-sized contexts** rather
+  than one: the `narrativeWorkerSequences` narrative sequences on a
+  `NARRATIVE_CONTEXT_SIZE` (8192) context, and the 3 utility sequences on
+  a `UTILITY_CONTEXT_SIZE` (4096) context. The utility sessions reset
+  history every call, so their footprint is one call's input+output (the
+  rules validator's scoped actor+target state, ~3K peak, is the largest)
+  — sizing them at the narrative window would waste `3 × (8192 − 4096)`
+  tokens of KV cache for no benefit. The split is the concrete RAM
+  saving: it roughly halves the utility group's KV footprint, buying OOM
+  headroom on a memory-constrained CPU Space (or room for a larger model
+  / more narrative sequences).
 
 **The eviction policy lives in `ai/index.ts`, not either driver** — the
 drivers only expose two mechanical primitives: `createNarrativeSession`
@@ -1254,6 +1262,20 @@ rather than assumed:
   conditional. `dtm/`'s `turn.audited` event's `checked` field now
   accurately reflects whether the full audit actually ran, not just
   whether an action was attempted.
+- **Bounded narration generation** (`ai/index.ts`'s `MAX_NARRATION_TOKENS`,
+  default 700) — every narration-producing `prompt()` call passes a
+  `maxTokens` cap through the shared `LlmDriver.prompt` interface. This is
+  a *generation* bound (tokens the model emits), not a *context* bound
+  like the three above — its target is worst-case latency on a local CPU
+  model, where an unbounded runaway/looping narration burns hundreds of
+  tokens at a few tokens/sec with no natural stop. The cap is deliberately
+  generous: a normal turn's tool sequence plus a few-sentence beat lands
+  well under it, so it only ever bites a genuine runaway; a rare mid-loop
+  truncation still degrades gracefully via the existing
+  `isInvalidNarration` blank/garbled fallback. On the local backend
+  `maxTokens` bounds the whole `prompt()` call (tool rounds + narration,
+  since node-llama-cpp owns that loop); on the API backend it's a
+  per-request cap that effectively bounds the final narration round.
 
 **One unified `compactContext` pipeline, not two separate mechanisms.**
 Per-turn tool-result compaction and multi-turn summarization were

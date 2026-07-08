@@ -32,8 +32,17 @@ export interface ChatDriverSession {
    * tool-calling loop internally (calling each tool's handler as the model
    * requests it, feeding results back, repeating until the model responds
    * with plain text) and returns only the final text.
+   *
+   * `options.maxTokens` caps generation. On the local backend it bounds the
+   * whole prompt() call's generation (tool-call rounds + final narration
+   * combined — see llamaCppDriver.ts); on the API backend it's a per-request
+   * cap, so it effectively bounds the final narration round (tool-call rounds
+   * generate little). Meant as a generous safety bound against a runaway
+   * narration (unbounded CPU generation is the worst-case latency spike on a
+   * local model), not a tight per-turn budget — a truncated narration still
+   * degrades gracefully via ai/'s empty/garbled-narration fallback.
    */
-  prompt(input: string, tools?: ToolDef[]): Promise<string>;
+  prompt(input: string, tools?: ToolDef[], options?: { maxTokens?: number }): Promise<string>;
   /**
    * A single, schema-forced-JSON completion — used by rules/'s
    * RuleValidator and audit/'s NarrationAuditor for their tri-state/boolean

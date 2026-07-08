@@ -71,9 +71,15 @@ class LlamaCppChatSession implements ChatDriverSession {
     this.onRelease = onRelease;
   }
 
-  async prompt(input: string, tools?: ToolDef[]): Promise<string> {
+  async prompt(input: string, tools?: ToolDef[], options?: { maxTokens?: number }): Promise<string> {
+    // maxTokens here bounds the whole prompt() call's generation - node-llama-cpp
+    // runs the tool-calling loop internally, so this budget is shared across
+    // tool-call rounds and the final narration (see llmDriver.ts). Kept generous
+    // upstream precisely so it only ever bites a runaway, never a normal turn's
+    // tool sequence.
+    const maxTokens = options?.maxTokens;
     if (!tools || tools.length === 0) {
-      return this.session.prompt(input);
+      return this.session.prompt(input, maxTokens !== undefined ? { maxTokens } : undefined);
     }
 
     const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
@@ -87,7 +93,7 @@ class LlamaCppChatSession implements ChatDriverSession {
         handler: tool.handler as never,
       });
     }
-    return this.session.prompt(input, { functions });
+    return this.session.prompt(input, { functions, ...(maxTokens !== undefined ? { maxTokens } : {}) });
   }
 
   async promptForJson<T>(input: string, schema: JsonSchema): Promise<T> {
@@ -174,22 +180,52 @@ export interface LlamaCppBackendConfig {
 export const DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2;
 
 /**
+ * KV-cache window for the per-character narrative sequences, which
+ * accumulate a character's own history across their turns (bounded by
+ * compactContext's rollups, but still growing within a rollup window).
+ * Bounded explicitly rather than "auto" (which sizes to the model's full
+ * trained context, often 128K+) - the 8192 value is the post-crash floor
+ * that stopped a real mid-turn overflow on a Hugging Face CPU Space.
+ */
+const NARRATIVE_CONTEXT_SIZE = 8192;
+
+/**
+ * KV-cache window for the 3 fixed utility sequences (rules/audit/summarizer).
+ * Half the narrative window, because these never accumulate: each resets
+ * history before every call (see RuleValidator/NarrationAuditor/Summarizer),
+ * so their footprint is one call's input+output, not a growing conversation.
+ * The largest is the rules validator - its scoped state is always just the
+ * actor + its target (scopeStateToAction, ~1.7K tokens measured, independent
+ * of cast size) plus its system prompt and schema response, ~3K peak - which
+ * sits comfortably under 4096. Sizing these at the narrative window instead
+ * would waste 3 x (8192 - 4096) tokens of KV cache for no benefit; this split
+ * is the concrete RAM saving (OOM headroom on a memory-constrained CPU Space).
+ */
+const UTILITY_CONTEXT_SIZE = 4096;
+
+/**
  * LlmDriver implementation backed by a local node-llama-cpp model.
- * Pre-allocates `3 + narrativeWorkerSequences` sequences on one context -
- * contextSize is bounded explicitly rather than "auto" (which tries to
- * size up to the model's full trained context, often 128K+ tokens) for
- * the same reason `sequences` is bounded: either gap can exhaust
- * available RAM or, if too small, overflow mid-turn (see the 4096 -> 8192
- * bump after a real crash on a Hugging Face CPU Space). Local sessions
- * implement compactContext (see llmDriver.ts) via LlamaChatSession's
- * getChatHistory()/setChatHistory(). The first 3 sequences are permanent,
- * handed out via createChatSession to ai/'s rules/audit/summarizer
- * sessions (in that order, at createAiSession's setup) and never
- * released; the rest form a free list for createNarrativeSession's
- * per-character sessions, reused via release() (see
- * LlamaCppChatSession.release's doc comment) rather than one dedicated
- * sequence per character - see ai/index.ts's per-character eviction pool
- * and docs/BACKEND_ARCHITECTURE.md.
+ * Pre-allocates sequences across TWO contexts sized to their occupants'
+ * actual needs, rather than one context sized to the largest:
+ * - `narrativeContext` (NARRATIVE_CONTEXT_SIZE, `narrativeWorkerSequences`
+ *   sequences) - the per-character sessions, which accumulate history and
+ *   need the big window.
+ * - `utilityContext` (UTILITY_CONTEXT_SIZE, 3 sequences) - the fixed
+ *   rules/audit/summarizer sessions, which reset history every call and so
+ *   need only a fraction of it (see UTILITY_CONTEXT_SIZE's doc comment for
+ *   the KV-cache saving this split buys).
+ * contextSize is bounded explicitly per context rather than "auto" (which
+ * tries to size up to the model's full trained context, often 128K+
+ * tokens): either gap can exhaust RAM or, if too small, overflow mid-turn.
+ * Local sessions implement compactContext (see llmDriver.ts) via
+ * LlamaChatSession's getChatHistory()/setChatHistory(). The 3 utility
+ * sequences are permanent, handed out via createChatSession to ai/'s
+ * rules/audit/summarizer sessions (in that order, at createAiSession's
+ * setup) and never released; the narrative sequences form a free list for
+ * createNarrativeSession's per-character sessions, reused via release()
+ * (see LlamaCppChatSession.release's doc comment) rather than one
+ * dedicated sequence per character - see ai/index.ts's per-character
+ * eviction pool and docs/BACKEND_ARCHITECTURE.md.
  */
 export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promise<LlmDriver> {
   const cpuQuota = detectCpuQuota();
@@ -203,13 +239,25 @@ export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promi
 
   const model = await llama.loadModel({ modelPath: config.modelPath });
   const narrativeWorkerSequences = config.narrativeWorkerSequences ?? DEFAULT_NARRATIVE_WORKER_SEQUENCES;
-  const context = await model.createContext({ contextSize: 8192, sequences: 3 + narrativeWorkerSequences });
 
-  const fixedSequences: LlamaContextSequence[] = [context.getSequence(), context.getSequence(), context.getSequence()];
+  const narrativeContext = await model.createContext({
+    contextSize: NARRATIVE_CONTEXT_SIZE,
+    sequences: narrativeWorkerSequences,
+  });
+  const utilityContext = await model.createContext({
+    contextSize: UTILITY_CONTEXT_SIZE,
+    sequences: 3,
+  });
+
+  const fixedSequences: LlamaContextSequence[] = [
+    utilityContext.getSequence(),
+    utilityContext.getSequence(),
+    utilityContext.getSequence(),
+  ];
   let nextFixedIndex = 0;
 
   const freeSequences: LlamaContextSequence[] = Array.from({ length: narrativeWorkerSequences }, () =>
-    context.getSequence(),
+    narrativeContext.getSequence(),
   );
 
   return {
@@ -230,7 +278,8 @@ export async function createLlamaCppDriver(config: LlamaCppBackendConfig): Promi
       return new LlamaCppChatSession(llama, sequence, systemPrompt, () => freeSequences.push(sequence));
     },
     async dispose() {
-      await context.dispose();
+      await utilityContext.dispose();
+      await narrativeContext.dispose();
       await model.dispose();
     },
   };

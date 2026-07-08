@@ -101,7 +101,7 @@ class ApiChatSession implements ChatDriverSession {
     this.messages = [{ role: "system", content: systemPrompt }];
   }
 
-  async prompt(input: string, tools?: ToolDef[]): Promise<string> {
+  async prompt(input: string, tools?: ToolDef[], options?: { maxTokens?: number }): Promise<string> {
     this.messages.push({ role: "user", content: input });
 
     const toolsByName = new Map((tools ?? []).map((tool) => [tool.name, tool]));
@@ -113,11 +113,16 @@ class ApiChatSession implements ChatDriverSession {
           }))
         : undefined;
 
+    // Per-request cap (see llmDriver.ts). A tool-call round generates little,
+    // so in practice this bounds the final narration round's length.
+    const maxTokensBody = options?.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {};
+
     const maxRounds = this.config.maxToolRounds ?? 8;
     for (let round = 0; round < maxRounds; round++) {
       const { message } = await postChatCompletion(this.config, {
         messages: this.messages,
         ...(openAiTools ? { tools: openAiTools } : {}),
+        ...maxTokensBody,
       });
       this.messages.push(message);
 
