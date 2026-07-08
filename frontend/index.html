@@ -28,6 +28,12 @@
       <section class="chat">
         <div class="messages" id="messages"></div>
         <form class="composer" id="composer">
+          <button type="button" id="character-btn" class="composer-icon-btn" title="Character" aria-label="Character info">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path>
+            </svg>
+          </button>
           <input
             id="input"
             type="text"
@@ -39,13 +45,6 @@
         </form>
       </section>
     </main>
-
-    <button id="character-btn" class="fab-btn" title="Character" aria-label="Character info">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="8" r="4"></circle>
-        <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8"></path>
-      </svg>
-    </button>
   </div>
 
   <dialog id="character-dialog">
