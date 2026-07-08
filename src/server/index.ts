@@ -319,16 +319,28 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       return;
     }
 
-    // /api/health is exempt from auth so uptime checks / the frontend's
-    // initial connectivity probe don't need the key.
+    // `/` and `/api/health` are exempt from auth so platform health checks
+    // (e.g. a Hugging Face Space probing the app port) and the frontend's
+    // initial connectivity probe succeed without the key — otherwise, when
+    // SERVER_API_KEY is set, the probe gets a 401, the container never reports
+    // healthy, and the Space hangs at "starting" before failing.
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname !== "/api/health" && options.apiKey && req.headers["x-api-key"] !== options.apiKey) {
+    const isPublicPath = url.pathname === "/" || url.pathname === "/api/health";
+    if (!isPublicPath && options.apiKey && req.headers["x-api-key"] !== options.apiKey) {
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Unauthorized" }));
       return;
     }
 
     try {
+      // Root path: a plain 200 so a container/platform health check on the app
+      // port passes. HEAD is answered with headers only.
+      if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(req.method === "HEAD" ? undefined : JSON.stringify({ status: "ok", service: "Genesis Infinity API", health: "/api/health" }));
+        return;
+      }
+
       if (req.method === "GET" && url.pathname === "/api/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ status: "ok", experience: current.name }));
@@ -700,8 +712,11 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
     }
   });
 
-  await new Promise<void>((resolve) => server.listen(options.port, resolve));
-  console.log(`Genesis Infinity API server listening on port ${options.port}`);
+  // Bind explicitly to 0.0.0.0 (all IPv4 interfaces). Without a host, Node may
+  // bind IPv6-only (::), which a container platform's IPv4 health probe can't
+  // reach — leaving the Space stuck at "starting".
+  await new Promise<void>((resolve) => server.listen(options.port, "0.0.0.0", resolve));
+  console.log(`Genesis Infinity API server listening on 0.0.0.0:${options.port}`);
 
   return {
     async close() {
