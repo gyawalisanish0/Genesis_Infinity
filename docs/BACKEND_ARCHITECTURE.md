@@ -573,15 +573,23 @@ different cost profile per backend:
   Infinity` — nothing is ever evicted.
 - **Local llama.cpp backend** (`llamaCppDriver.ts`) — bounded. Each
   `LlamaContextSequence` is a real, memory-backed KV cache; the driver
-  now reserves `3 + narrativeWorkerSequences` sequences instead of a flat
-  4 — 3 permanent (rules validator, narration auditor, summarizer, handed
-  out via the unchanged `createChatSession`, never released) plus a
-  `narrativeWorkerSequences`-sized pool (`LlamaCppBackendConfig`,
-  default `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2`) reused across
-  characters via the new `createNarrativeSession`. Since each sequence
-  gets its own full `contextSize`-sized KV cache (not divided), the
-  default raises the backend's reserved memory by ~25% (5 sequences
-  instead of 4).
+  reserves `3 + narrativeWorkerSequences` sequences — 3 permanent (rules
+  validator, narration auditor, summarizer, handed out via the unchanged
+  `createChatSession`, never released) plus a `narrativeWorkerSequences`-sized
+  pool (`LlamaCppBackendConfig`, default `DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2`)
+  reused across characters via the new `createNarrativeSession`. Each
+  sequence gets its own full `contextSize`-sized KV cache (not divided),
+  so those two groups live on **two separately-sized contexts** rather
+  than one: the `narrativeWorkerSequences` narrative sequences on a
+  `NARRATIVE_CONTEXT_SIZE` (8192) context, and the 3 utility sequences on
+  a `UTILITY_CONTEXT_SIZE` (4096) context. The utility sessions reset
+  history every call, so their footprint is one call's input+output (the
+  rules validator's scoped actor+target state, ~3K peak, is the largest)
+  — sizing them at the narrative window would waste `3 × (8192 − 4096)`
+  tokens of KV cache for no benefit. The split is the concrete RAM
+  saving: it roughly halves the utility group's KV footprint, buying OOM
+  headroom on a memory-constrained CPU Space (or room for a larger model
+  / more narrative sequences).
 
 **The eviction policy lives in `ai/index.ts`, not either driver** — the
 drivers only expose two mechanical primitives: `createNarrativeSession`
