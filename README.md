@@ -116,5 +116,13 @@ npm run typecheck
 
 ## License
 
-No license has been declared for this project yet. Until one is added, all
-rights are reserved by the author.
+The **engine — all source code and documentation** in this repository — is
+licensed under the [MIT License](LICENSE). Use it, modify it, and build your
+own worlds on it freely.
+
+**The worlds are not.** The Experience content — the original worlds,
+characters, settings, and narrative shipped in this repository — is **©
+2026 Sanish Gyawali, all rights reserved**, and is *not* covered by the MIT
+License. You may play it and learn the format from it, but you may not
+redistribute or reuse the story IP itself. The MIT grant covers the software,
+not the fiction it runs.

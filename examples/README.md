@@ -43,3 +43,12 @@ items, effects, and environmental hazards.
 
 **Read [docs/EXPERIENCE_SCHEMA.md](../docs/EXPERIENCE_SCHEMA.md)** for the
 full field reference and the cross-file contracts the loader enforces.
+
+## A note on content & IP
+
+The **engine** is MIT-licensed, but the **Experience content** here — the
+worlds, characters, settings, and narrative — is © 2026 Sanish Gyawali, all
+rights reserved, and is **not** covered by that license (see the
+[root README](../README.md#license)). Study the packages to learn the format,
+but the story IP itself isn't licensed for redistribution or reuse. Worlds
+you author are, of course, entirely your own.
