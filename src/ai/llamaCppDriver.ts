@@ -9,6 +9,7 @@ import {
   type LlamaContextSequence,
   type LlamaJsonSchemaGrammar,
 } from "node-llama-cpp";
+import { DEFAULT_NARRATIVE_WORKER_SEQUENCES } from "./llmDriver.js";
 import type { ChatDriverSession, JsonSchema, LlmDriver, ToolDef } from "./llmDriver.js";
 
 /**
@@ -170,14 +171,11 @@ export interface LlamaCppBackendConfig {
   narrativeWorkerSequences?: number;
 }
 
-/**
- * Engine default for LlamaCppBackendConfig.narrativeWorkerSequences.
- * Covers "player + one active NPC" resident with zero eviction cost in a
- * typical small cast; a larger simultaneous cast starts paying the
- * bounded reload cost ai/index.ts's eviction policy caps (see
- * docs/BACKEND_ARCHITECTURE.md).
- */
-export const DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2;
+// DEFAULT_NARRATIVE_WORKER_SEQUENCES now lives in ./llmDriver.ts (the
+// backend-agnostic module) so core/ can read it without importing this file
+// and eagerly loading node-llama-cpp — it is re-exported here for callers that
+// still import it from the llamaCpp driver.
+export { DEFAULT_NARRATIVE_WORKER_SEQUENCES } from "./llmDriver.js";
 
 /**
  * KV-cache window for the per-character narrative sequences, which

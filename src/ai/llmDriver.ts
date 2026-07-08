@@ -111,3 +111,17 @@ export interface LlmDriver {
   /** Releases any underlying resources (model, context, HTTP client, etc). */
   dispose(): Promise<void>;
 }
+
+/**
+ * Engine default for LlamaCppBackendConfig.narrativeWorkerSequences — how many
+ * dedicated narrative sequences the local llama.cpp pool pre-allocates.
+ * Covers "player + one active NPC" resident with zero eviction cost in a
+ * typical small cast; a larger simultaneous cast starts paying the bounded
+ * reload cost ai/index.ts's eviction policy caps (see docs/BACKEND_ARCHITECTURE.md).
+ *
+ * Defined here, in the backend-agnostic module, rather than in llamaCppDriver.ts,
+ * so core/ and ai/ can read it without importing llamaCppDriver.ts — which would
+ * eagerly load the node-llama-cpp native addon at process start (see the
+ * lazy-load note in ai/index.ts's createDriver).
+ */
+export const DEFAULT_NARRATIVE_WORKER_SEQUENCES = 2;

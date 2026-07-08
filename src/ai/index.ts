@@ -15,7 +15,7 @@ import { NarrationAuditor } from "../audit/index.js";
 import { Summarizer } from "../summarizer/index.js";
 import { getState, type StateSnapshot } from "../state/index.js";
 import type { ChatDriverSession, LlmDriver, ToolDef } from "./llmDriver.js";
-import { createLlamaCppDriver, type LlamaCppBackendConfig } from "./llamaCppDriver.js";
+import type { LlamaCppBackendConfig } from "./llamaCppDriver.js";
 import { createApiDriver, type ApiBackendConfig } from "./apiDriver.js";
 
 /**
@@ -27,8 +27,16 @@ export type BackendConfig = ({ type: "llamaCpp" } & LlamaCppBackendConfig) | ({ 
 
 async function createDriver(backend: BackendConfig): Promise<LlmDriver> {
   switch (backend.type) {
-    case "llamaCpp":
+    case "llamaCpp": {
+      // Lazily import the local driver so node-llama-cpp's native addon is only
+      // loaded when a local GGUF model is actually selected. An API-backed
+      // deployment (e.g. the hosted server, which picks an API model at
+      // runtime) never touches it — loading it eagerly at process start can
+      // hang or badly slow boot on a constrained CPU container, which would
+      // stop the server from ever binding its port.
+      const { createLlamaCppDriver } = await import("./llamaCppDriver.js");
       return createLlamaCppDriver(backend);
+    }
     case "api":
       return createApiDriver(backend);
   }
