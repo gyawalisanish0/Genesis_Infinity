@@ -42,21 +42,36 @@ decouples "connected to a server" from "a model is loaded and
 playable" — the two were the same moment before runtime model-picking
 existed, but aren't anymore.
 
+The scope refetch is triggered by two conditions, not one: the not-ready→
+ready status edge, *and* a `scopeStale` flag that an Experience switch sets
+(consumed on the next `"ready"` poll). The flag exists because a same-model
+switch keeps the model loaded — its fire-and-forget engine rebuild can
+finish inside a single 3s poll interval, so the poll never observes the
+intervening `"starting"` state and the ready edge never fires, yet the scope
+now belongs to a different character. Consuming the flag stays gated on
+`"ready"` because `GET /api/scope` returns 409 while the engine is rebuilding
+(the backend sets status to `"starting"` synchronously at the start of that
+rebuild, so a `"ready"` status reliably means the rebuild has finished).
+
 ## Character panel
 
 Renders `Scope` (the same shape the AI model itself sees) as: HP as a
 severity-colored meter (green above 50%, amber above 25%, red below),
 armor class as a plain stat tile, current location, inventory, and who
-else is present. Lives in `#character-dialog`, opened by the floating
-`#character-btn` icon pinned to the bottom-left corner of the viewport
-(`.fab-btn`, positioned above the composer bar so it never overlaps the
-input) — the same `<dialog>` on every screen size, no separate desktop
-layout. `renderScope()` itself is unchanged from when this content was
-an always-visible sidebar: it just un-hides `#sidebar-content` (and
-hides the `#sidebar-empty` placeholder) inside whatever container holds
-those ids, so the dialog conversion only touched markup/CSS, not the
-rendering logic. Re-rendered from the `scope` bundled in every
+else is present. Lives in `#character-dialog`, opened by the
+`#character-btn` icon that sits inside the composer bar to the left of
+the input (`.composer-icon-btn`, styled as a neutral affordance next to
+the accent-filled Send button; `type="button"` so it never submits the
+composer form) — the same `<dialog>` on every screen size, no separate
+desktop layout. `renderScope()` itself is unchanged from when this
+content was an always-visible sidebar: it just un-hides `#sidebar-content`
+(and hides the `#sidebar-empty` placeholder) inside whatever container
+holds those ids, so the dialog conversion only touched markup/CSS, not
+the rendering logic. Re-rendered from the `scope` bundled in every
 `POST /api/turn` response, so it never needs a second round trip per turn.
+`resetCharacterPanel()` puts it back to the empty placeholder state — used
+on an Experience switch (see below) so the previous character's stats don't
+linger while the new engine rebuilds.
 
 ## Chat
 
@@ -136,10 +151,13 @@ The topbar's Experience name doubles as a button opening the Experiences
   transcript describes nothing real anymore), updates the topbar name,
   and resets `hasTurn` — the composer re-enables on the rebuilt
   scheduler's next `your_turn` (or stays gated on a model being loaded
-  at all, if the server was idle). The character panel refreshes
-  automatically the next time it's opened (or the next turn re-renders
-  it), through the existing status-poll ready-transition, since a switch
-  with a loaded model cycles status ready → starting → ready.
+  at all, if the server was idle). The character panel is cleared to its
+  empty state immediately (`resetCharacterPanel()`) and re-fetched via the
+  `scopeStale` flag once the rebuilt engine reports `"ready"` (see the
+  status-polling section above) — relying on the ready-transition edge
+  alone was unreliable, because a same-model switch can rebuild the engine
+  faster than the 3s poll and slip past the `"starting"` state entirely,
+  leaving the old character's stats on screen until a manual refresh.
 - **Character chips** — each package row that has existing (pre-authored)
   characters (`pkg.characters`, always present alongside `customCharacter`)
   gets a row of small pill buttons underneath, one per character
