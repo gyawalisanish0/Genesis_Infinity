@@ -1,0 +1,51 @@
+{
+  "id": "kestrel",
+  "name": "Kestrel",
+  "class": "Infiltrator",
+  "background": "Ex-intelligence, gone freelance",
+  "level": 8,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 13 },
+    { "id": "dex", "name": "Dexterity", "score": 18 },
+    { "id": "con", "name": "Constitution", "score": 14 },
+    { "id": "int", "name": "Intelligence", "score": 15 },
+    { "id": "wis", "name": "Wisdom", "score": 15 },
+    { "id": "cha", "name": "Charisma", "score": 12 }
+  ],
+  "skills": [
+    { "id": "stealth", "name": "Stealth", "governingAbilityId": "dex", "value": 8 },
+    { "id": "acrobatics", "name": "Acrobatics", "governingAbilityId": "dex", "value": 7 },
+    { "id": "sleight-of-hand", "name": "Sleight of Hand", "governingAbilityId": "dex", "value": 6 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 6 },
+    { "id": "investigation", "name": "Investigation", "governingAbilityId": "int", "value": 5 }
+  ],
+  "techniques": [
+    {
+      "id": "grapnel-swing",
+      "name": "Grapnel Swing",
+      "description": "Fires a magnetic line and swings across a gap to reach a target or ledge in one move.",
+      "relocatesToTarget": true
+    },
+    {
+      "id": "silent-takedown",
+      "name": "Silent Takedown",
+      "description": "A fast, quiet strike to the throat and knee from close range.",
+      "effectId": "grazed"
+    }
+  ],
+  "inventory": [
+    { "itemId": "kevlar-vest", "quantity": 1, "equipped": true },
+    { "itemId": "adrenaline-shot", "quantity": 2 }
+  ],
+  "hitPoints": { "current": 60, "max": 60 },
+  "armorClass": 15,
+  "personality": "Cool, economical, and allergic to unnecessary risk. Reads a room in a glance and would rather slip past a fight than win one.",
+  "tone": "Dry, clipped, quietly confident. Speaks little and means all of it.",
+  "plotPoints": [
+    {
+      "id": "alarm-armed",
+      "description": "The silent alarm Kestrel tripped on entry finishes its countdown — Warden now knows exactly which floor she's on.",
+      "atUnit": 400
+    }
+  ]
+}

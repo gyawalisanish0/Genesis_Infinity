@@ -63,12 +63,22 @@ their current inventory — that's derived.
 ### Ruleset resolution (per-entry fallback)
 
 `abilities`, `skills`, `effects`, and `items` on `experience.json` are all
-**optional**. When omitted, the engine falls back to a built-in D&D-style
-default (`DEFAULT_ABILITIES`, `DEFAULT_SKILLS`, `DEFAULT_EFFECTS`,
-`DEFAULT_ITEMS` in `src/data/schemas/character.ts`). Resolution is
-**per-entry**: declaring your own list *replaces* the default for that
-category entirely — it is not merged entry-by-entry with the defaults. If
-you want the six standard abilities plus one custom one, declare all seven.
+**optional**. When omitted, the engine uses a built-in D&D-style default
+(`DEFAULT_ABILITIES`, `DEFAULT_SKILLS`, `DEFAULT_EFFECTS`, `DEFAULT_ITEMS` in
+`src/data/schemas/character.ts`). Resolution is **per-entry fallback that
+merges with the defaults**, keyed by id:
+
+- Every entry you declare is added to the resolved set.
+- A declared entry whose `id` matches a default **overrides** that default.
+- Every default id you *don't* override **remains available**.
+
+So the defaults are always there unless you replace them by id. To add one
+custom ability alongside the six standard ones, declare just the custom one —
+you keep all six defaults for free. This also means you can freely reference
+the built-in items (`health-potion`, `iron-shield`) and effects (`exposed`,
+`weakened`, `battered`) even in an Experience that declares its own, without
+re-declaring them. (For skills, a declared skill whose `governingAbilityId`
+isn't in the resolved ability set is dropped — see the loader.)
 
 ---
 

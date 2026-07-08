@@ -1,0 +1,52 @@
+{
+  "id": "nyx",
+  "name": "Nyx",
+  "class": "Netrunner-Merc",
+  "background": "Freelance runner, in over her head with the arcology",
+  "level": 7,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 11 },
+    { "id": "dex", "name": "Dexterity", "score": 17 },
+    { "id": "con", "name": "Constitution", "score": 13 },
+    { "id": "int", "name": "Intelligence", "score": 16 },
+    { "id": "wis", "name": "Wisdom", "score": 13 },
+    { "id": "cha", "name": "Charisma", "score": 13 }
+  ],
+  "skills": [
+    { "id": "stealth", "name": "Stealth", "governingAbilityId": "dex", "value": 7 },
+    { "id": "arcana", "name": "Netrunning", "governingAbilityId": "int", "value": 8 },
+    { "id": "acrobatics", "name": "Acrobatics", "governingAbilityId": "dex", "value": 6 },
+    { "id": "investigation", "name": "Investigation", "governingAbilityId": "int", "value": 6 },
+    { "id": "deception", "name": "Deception", "governingAbilityId": "cha", "value": 5 }
+  ],
+  "techniques": [
+    {
+      "id": "breach-spike",
+      "name": "Breach Spike",
+      "description": "Jacks a hostile daemon straight into a target's neural link, lighting up their pain receptors.",
+      "effectId": "ice-shock"
+    },
+    {
+      "id": "blade-flurry",
+      "name": "Blade Flurry",
+      "description": "A blur of monofilament strikes at close range before the target can react.",
+      "effectId": "reflex-jammed"
+    }
+  ],
+  "inventory": [
+    { "itemId": "subdermal-plating", "quantity": 1, "equipped": true },
+    { "itemId": "mono-katana", "quantity": 1, "equipped": true },
+    { "itemId": "stim-patch", "quantity": 2 }
+  ],
+  "hitPoints": { "current": 58, "max": 58 },
+  "armorClass": 14,
+  "personality": "Sharp, sardonic, and allergic to being owned. Runs her mouth to hide how scared she is, but she's fast, clever, and doesn't quit while she's still breathing.",
+  "tone": "Fast, slangy, and cynical, with a joke loaded for every threat.",
+  "plotPoints": [
+    {
+      "id": "trace-complete",
+      "description": "The arcology's counter-trace finally locks Nyx's signal — they know exactly where she is now.",
+      "atUnit": 400
+    }
+  ]
+}

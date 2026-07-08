@@ -1,0 +1,70 @@
+{
+  "id": "kepler-station",
+  "name": "Kepler Station",
+  "width": 3,
+  "height": 3,
+  "regions": [
+    {
+      "id": "station-ring",
+      "position": { "x": 1, "y": 1 },
+      "name": "Station Ring",
+      "description": "A silent orbital platform, powerless for months. Emergency strips glow a dim amber down every corridor, and the whole ring turns slowly against the stars.",
+      "worldType": "semi-open",
+      "environmentalCodes": [
+        {
+          "category": "gravity",
+          "value": "low",
+          "severity": 1,
+          "mechanical": false,
+          "description": "Spin gravity at a fraction of a g — footfalls float, thrown objects drift."
+        },
+        {
+          "category": "atmosphere",
+          "value": "thin",
+          "severity": 2,
+          "mechanical": false,
+          "description": "Recyclers are down; the air is cold, stale, and getting worse."
+        }
+      ],
+      "nodes": [
+        {
+          "id": "docking-ring",
+          "name": "Docking Ring",
+          "description": "The airlock bay where Vega's cutter is clamped on. Cargo nets and dead loaders line the walls; a bulkhead leads inward.",
+          "type": "airlock",
+          "localPosition": { "x": 0, "y": 0 },
+          "connections": [{ "targetNodeId": "corridor-c" }]
+        },
+        {
+          "id": "corridor-c",
+          "name": "Corridor C",
+          "description": "A long service corridor of exposed conduit and floating debris. Something with servos is moving at the far end.",
+          "type": "corridor",
+          "localPosition": { "x": 1, "y": 0 },
+          "connections": [
+            { "targetNodeId": "docking-ring" },
+            { "targetNodeId": "reactor-core" }
+          ]
+        },
+        {
+          "id": "reactor-core",
+          "name": "Reactor Core",
+          "description": "The heart of the station, where the log Vega came for is stored. The containment is cracked, and the core bleeds radiation into the room.",
+          "type": "reactor",
+          "localPosition": { "x": 2, "y": 0 },
+          "environmentalCodes": [
+            {
+              "category": "radiation",
+              "value": "high",
+              "severity": 4,
+              "mechanical": true,
+              "effectId": "irradiated",
+              "description": "The breached core floods the chamber with hard radiation — every second here costs."
+            }
+          ],
+          "connections": [{ "targetNodeId": "corridor-c" }]
+        }
+      ]
+    }
+  ]
+}

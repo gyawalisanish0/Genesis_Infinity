@@ -1,0 +1,61 @@
+{
+  "id": "blackmoor-medieval",
+  "name": "The Siege of Blackmoor",
+  "version": "1.0.0",
+  "description": "Medieval. The keep has fallen in the night. Sir Cedric holds the inner ward alone against the sellsword who took it — the Black Captain. Steel, stone, and smoke, no sorcery. Original content.",
+  "author": "Genesis Infinity",
+  "mode": "single-player",
+  "playerCharacterId": "cedric",
+  "difficulty": { "defaultTier": "hard" },
+  "effects": [
+    {
+      "id": "wounded",
+      "name": "Wounded",
+      "description": "A blade found a gap in the armor.",
+      "severity": 3,
+      "currentHitPointsDelta": -12
+    },
+    {
+      "id": "shield-broken",
+      "name": "Shield Broken",
+      "description": "A crushing blow splinters the shield and leaves the arm ringing.",
+      "severity": 2,
+      "armorClassDelta": -3
+    },
+    {
+      "id": "smoke-choked",
+      "name": "Smoke-Choked",
+      "description": "Lungs full of gatehouse smoke — every breath a cough.",
+      "severity": 2,
+      "currentHitPointsDelta": -5
+    }
+  ],
+  "items": [
+    {
+      "id": "kite-shield",
+      "name": "Kite Shield",
+      "description": "A tall, iron-rimmed shield bearing a faded crest.",
+      "type": "equipment",
+      "armorClassDelta": 2
+    },
+    {
+      "id": "plate-harness",
+      "name": "Plate Harness",
+      "description": "A full harness of well-kept plate — heavy, but it turns most blows.",
+      "type": "equipment",
+      "armorClassDelta": 3,
+      "maxHitPointsDelta": 10
+    },
+    {
+      "id": "healers-salve",
+      "name": "Healer's Salve",
+      "description": "A pot of pungent salve that closes cuts and dulls pain.",
+      "type": "consumable",
+      "healAmount": 25
+    }
+  ],
+  "characters": [
+    { "characterId": "cedric", "startingNodeId": "inner-ward" },
+    { "characterId": "black-captain", "startingNodeId": "keep-hall" }
+  ]
+}

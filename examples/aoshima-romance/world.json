@@ -1,0 +1,53 @@
+{
+  "id": "aoshima-festival",
+  "name": "Aoshima Summer Festival",
+  "width": 3,
+  "height": 3,
+  "regions": [
+    {
+      "id": "festival-grounds",
+      "position": { "x": 1, "y": 1 },
+      "name": "Festival Grounds",
+      "description": "A seaside town strung end to end with paper lanterns. Warm light, the smell of grilled food and sea salt, and a slow river of people in summer yukata.",
+      "worldType": "semi-open",
+      "environmentalCodes": [
+        {
+          "category": "atmosphere",
+          "value": "festive",
+          "severity": 1,
+          "mechanical": false,
+          "description": "Taiko drums, laughter, and the hush of the tide underneath it all."
+        }
+      ],
+      "nodes": [
+        {
+          "id": "festival-entrance",
+          "name": "The Torii Gate",
+          "description": "The great red gate where the festival begins, hung with lanterns and a banner in the sea breeze. The stalls start just beyond.",
+          "type": "gate",
+          "localPosition": { "x": 0, "y": 0 },
+          "connections": [{ "targetNodeId": "food-stalls" }]
+        },
+        {
+          "id": "food-stalls",
+          "name": "The Food Stalls",
+          "description": "A bright, crowded lane of vendors — takoyaki, shaved ice, goldfish scooping, a shrine charm stand. Easy to lose someone here, or find them.",
+          "type": "market",
+          "localPosition": { "x": 1, "y": 0 },
+          "connections": [
+            { "targetNodeId": "festival-entrance" },
+            { "targetNodeId": "lantern-pier" }
+          ]
+        },
+        {
+          "id": "lantern-pier",
+          "name": "The Lantern Pier",
+          "description": "A quiet wooden pier at the edge of the crowd, where people set paper lanterns onto the dark water. The noise falls away out here. It is very easy to say true things.",
+          "type": "pier",
+          "localPosition": { "x": 2, "y": 0 },
+          "connections": [{ "targetNodeId": "food-stalls" }]
+        }
+      ]
+    }
+  ]
+}

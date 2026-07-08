@@ -1,0 +1,30 @@
+{
+  "id": "aoshima-romance",
+  "name": "Lanterns Over Aoshima",
+  "version": "1.0.0",
+  "description": "Romance. A summer lantern festival on the seaside town of Aoshima. Rin has one evening to find the words she's been saving for Haru. A gentle, non-combat experience about nerve, timing, and honesty. Original content.",
+  "author": "Genesis Infinity",
+  "mode": "single-player",
+  "playerCharacterId": "rin",
+  "difficulty": { "defaultTier": "medium" },
+  "items": [
+    {
+      "id": "takoyaki",
+      "name": "Takoyaki",
+      "description": "A paper tray of hot octopus dumplings from a food stall — comfort food that settles the stomach and the nerves.",
+      "type": "consumable",
+      "healAmount": 10
+    },
+    {
+      "id": "paper-charm",
+      "name": "Paper Charm",
+      "description": "A little omamori bought at the shrine stall. Holding it makes the next brave thing feel a bit less impossible.",
+      "type": "equipment",
+      "maxHitPointsDelta": 8
+    }
+  ],
+  "characters": [
+    { "characterId": "rin", "startingNodeId": "festival-entrance" },
+    { "characterId": "haru", "startingNodeId": "lantern-pier" }
+  ]
+}

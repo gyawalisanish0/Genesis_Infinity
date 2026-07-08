@@ -1,0 +1,53 @@
+{
+  "id": "blackline-action",
+  "name": "Blackline",
+  "version": "1.0.0",
+  "description": "Action. A rooftop infiltration of Meridian Tower — the operative Kestrel against Warden, the security chief who has been waiting for her. Original content.",
+  "author": "Genesis Infinity",
+  "mode": "single-player",
+  "playerCharacterId": "kestrel",
+  "difficulty": { "defaultTier": "hard" },
+  "effects": [
+    {
+      "id": "grazed",
+      "name": "Grazed",
+      "description": "A round clipped home — bleeding and slowed.",
+      "severity": 2,
+      "currentHitPointsDelta": -10
+    },
+    {
+      "id": "pinned",
+      "name": "Pinned",
+      "description": "Suppressing fire keeps them from moving cleanly.",
+      "severity": 1,
+      "armorClassDelta": -2
+    },
+    {
+      "id": "flashed",
+      "name": "Flashed",
+      "description": "Blinded and deafened by a flashbang — no guard at all.",
+      "severity": 3,
+      "armorClassDelta": -4
+    }
+  ],
+  "items": [
+    {
+      "id": "kevlar-vest",
+      "name": "Kevlar Vest",
+      "description": "A low-profile ballistic vest worn under the suit.",
+      "type": "equipment",
+      "armorClassDelta": 2
+    },
+    {
+      "id": "adrenaline-shot",
+      "name": "Adrenaline Shot",
+      "description": "A single-use auto-injector that dulls pain and closes ranks fast.",
+      "type": "consumable",
+      "healAmount": 25
+    }
+  ],
+  "characters": [
+    { "characterId": "kestrel", "startingNodeId": "rooftop-helipad" },
+    { "characterId": "warden", "startingNodeId": "executive-floor" }
+  ]
+}

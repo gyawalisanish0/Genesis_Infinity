@@ -1,0 +1,50 @@
+{
+  "id": "vega",
+  "name": "Vega Portes",
+  "class": "Salvage Engineer",
+  "background": "Independent wreck-diver, one bad contract from broke",
+  "level": 6,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 13 },
+    { "id": "dex", "name": "Dexterity", "score": 15 },
+    { "id": "con", "name": "Constitution", "score": 14 },
+    { "id": "int", "name": "Intelligence", "score": 16 },
+    { "id": "wis", "name": "Wisdom", "score": 13 },
+    { "id": "cha", "name": "Charisma", "score": 12 }
+  ],
+  "skills": [
+    { "id": "investigation", "name": "Investigation", "governingAbilityId": "int", "value": 7 },
+    { "id": "arcana", "name": "Systems", "governingAbilityId": "int", "value": 7 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 6 },
+    { "id": "sleight-of-hand", "name": "Sleight of Hand", "governingAbilityId": "dex", "value": 5 }
+  ],
+  "techniques": [
+    {
+      "id": "overload-surge",
+      "name": "Overload Surge",
+      "description": "Feeds a controlled power spike into a target's systems, frying circuits and augments.",
+      "effectId": "emp-shock"
+    },
+    {
+      "id": "plasma-cutter",
+      "name": "Plasma Cutter",
+      "description": "A salvage torch turned weapon — a searing arc at close range.",
+      "effectId": "plasma-burn"
+    }
+  ],
+  "inventory": [
+    { "itemId": "eva-suit", "quantity": 1, "equipped": true },
+    { "itemId": "med-injector", "quantity": 2 }
+  ],
+  "hitPoints": { "current": 55, "max": 55 },
+  "armorClass": 13,
+  "personality": "Practical, wry, and stubborn — talks to machines more easily than people and trusts a good multitool over any promise. Won't leave a job unfinished.",
+  "tone": "Deadpan and technical, muttering half to herself and half to the ship.",
+  "plotPoints": [
+    {
+      "id": "reactor-clock",
+      "description": "Vega's dosimeter starts screaming — she now knows exactly how little time she has near the core.",
+      "atUnit": 300
+    }
+  ]
+}

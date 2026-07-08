@@ -1,0 +1,50 @@
+{
+  "id": "aldric",
+  "name": "Aldric",
+  "class": "Mage's Apprentice",
+  "race": "Human",
+  "background": "Runaway scholar of the Ashen College",
+  "level": 5,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 9 },
+    { "id": "dex", "name": "Dexterity", "score": 13 },
+    { "id": "con", "name": "Constitution", "score": 12 },
+    { "id": "int", "name": "Intelligence", "score": 17 },
+    { "id": "wis", "name": "Wisdom", "score": 14 },
+    { "id": "cha", "name": "Charisma", "score": 13 }
+  ],
+  "skills": [
+    { "id": "arcana", "name": "Arcana", "governingAbilityId": "int", "value": 7 },
+    { "id": "investigation", "name": "Investigation", "governingAbilityId": "int", "value": 6 },
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 5 },
+    { "id": "history", "name": "History", "governingAbilityId": "int", "value": 5 }
+  ],
+  "techniques": [
+    {
+      "id": "firebolt",
+      "name": "Firebolt",
+      "description": "A darting mote of flame flung from the fingertips.",
+      "effectId": "scorched"
+    },
+    {
+      "id": "arcane-ward",
+      "name": "Arcane Ward",
+      "description": "A shimmering shield of force woven in front of the caster to blunt the next blow."
+    }
+  ],
+  "inventory": [
+    { "itemId": "warded-cloak", "quantity": 1, "equipped": true },
+    { "itemId": "mana-draught", "quantity": 2 }
+  ],
+  "hitPoints": { "current": 40, "max": 40 },
+  "armorClass": 12,
+  "personality": "Bookish and brave past his skill — genuinely kind, prone to explaining things no one asked about, steadier than he looks when it finally matters.",
+  "tone": "Earnest and wordy, quick to wonder, slow to give up.",
+  "plotPoints": [
+    {
+      "id": "starfire-calls",
+      "description": "The buried starfire resonates with Aldric's own magic, tugging him toward the shrine whether he wills it or not.",
+      "atUnit": 300
+    }
+  ]
+}

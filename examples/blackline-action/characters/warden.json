@@ -1,0 +1,44 @@
+{
+  "id": "warden",
+  "name": "Warden",
+  "class": "Security Chief",
+  "background": "Former close-protection officer",
+  "level": 8,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 16 },
+    { "id": "dex", "name": "Dexterity", "score": 14 },
+    { "id": "con", "name": "Constitution", "score": 16 },
+    { "id": "int", "name": "Intelligence", "score": 13 },
+    { "id": "wis", "name": "Wisdom", "score": 15 },
+    { "id": "cha", "name": "Charisma", "score": 11 }
+  ],
+  "skills": [
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 8 },
+    { "id": "athletics", "name": "Athletics", "governingAbilityId": "str", "value": 7 },
+    { "id": "intimidation", "name": "Intimidation", "governingAbilityId": "cha", "value": 5 },
+    { "id": "investigation", "name": "Investigation", "governingAbilityId": "int", "value": 6 }
+  ],
+  "techniques": [
+    {
+      "id": "suppressing-fire",
+      "name": "Suppressing Fire",
+      "description": "A disciplined burst that forces the target to break stance and stay down.",
+      "effectId": "pinned"
+    },
+    {
+      "id": "flashbang",
+      "name": "Flashbang",
+      "description": "A stun grenade rolled into cover — light and pressure that white out a target's senses.",
+      "effectId": "flashed"
+    }
+  ],
+  "inventory": [
+    { "itemId": "kevlar-vest", "quantity": 1, "equipped": true },
+    { "itemId": "health-potion", "quantity": 1 }
+  ],
+  "hitPoints": { "current": 70, "max": 70 },
+  "armorClass": 16,
+  "personality": "Methodical, patient, and territorial. Treats the tower as his own body and any intruder as a splinter to be removed cleanly.",
+  "tone": "Measured and unhurried, with a threat folded into every polite sentence.",
+  "plotPoints": []
+}

@@ -1,0 +1,44 @@
+{
+  "id": "kade",
+  "name": "Kade",
+  "class": "Corporate Enforcer",
+  "background": "The arcology's preferred collector — augmented, patient, expensive",
+  "level": 8,
+  "abilities": [
+    { "id": "str", "name": "Strength", "score": 17 },
+    { "id": "dex", "name": "Dexterity", "score": 15 },
+    { "id": "con", "name": "Constitution", "score": 16 },
+    { "id": "int", "name": "Intelligence", "score": 12 },
+    { "id": "wis", "name": "Wisdom", "score": 14 },
+    { "id": "cha", "name": "Charisma", "score": 12 }
+  ],
+  "skills": [
+    { "id": "perception", "name": "Perception", "governingAbilityId": "wis", "value": 8 },
+    { "id": "athletics", "name": "Athletics", "governingAbilityId": "str", "value": 7 },
+    { "id": "intimidation", "name": "Intimidation", "governingAbilityId": "cha", "value": 6 },
+    { "id": "insight", "name": "Insight", "governingAbilityId": "wis", "value": 6 }
+  ],
+  "techniques": [
+    {
+      "id": "shock-baton",
+      "name": "Shock Baton",
+      "description": "A charged baton strike that overloads wired reflexes on contact.",
+      "effectId": "reflex-jammed"
+    },
+    {
+      "id": "arm-cannon",
+      "name": "Arm Cannon",
+      "description": "A concealed forearm slug-thrower that punches through most plating.",
+      "effectId": "ice-shock"
+    }
+  ],
+  "inventory": [
+    { "itemId": "subdermal-plating", "quantity": 1, "equipped": true },
+    { "itemId": "health-potion", "quantity": 1 }
+  ],
+  "hitPoints": { "current": 80, "max": 80 },
+  "armorClass": 16,
+  "personality": "Professional, unhurried, and entirely without malice — this is a job, and Nyx is a line item. Offers terms once. Does not offer them twice.",
+  "tone": "Polite, corporate, and quietly menacing; talks like a customer-service script with a gun behind it.",
+  "plotPoints": []
+}
