@@ -19,8 +19,8 @@ import { KNOWN_API_PROVIDERS, type ApiProviderId, type ConfiguredApiProvider } f
  * io/cli.ts's --debug flag, visible in a deployed Space's container logs.
  */
 async function main(): Promise<void> {
-  const experienceDir = process.env.EXPERIENCE_DIR ?? "examples/goku-vs-venom";
-  const characterId = process.env.CHARACTER_ID ?? "goku";
+  const experienceDir = process.env.EXPERIENCE_DIR ?? "examples/blackline-action";
+  const characterId = process.env.CHARACTER_ID ?? "kestrel";
   const port = Number(process.env.PORT ?? 7860);
   const corsOrigin = process.env.CORS_ORIGIN ?? "*";
   const apiKey = process.env.SERVER_API_KEY;
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
 
   await startServer({
     experienceDir,
-    dbPath: `${experienceDir}/dtm.sqlite`,
+    dbPath: `${experienceDir}/dtm.json`,
     characterId,
     port,
     apiKey,

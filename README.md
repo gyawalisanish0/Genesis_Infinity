@@ -61,9 +61,9 @@ npm install
 
 ```bash
 npm run play -- \
-  --experience examples/goku-vs-venom \
+  --experience examples/blackline-action \
   --model /path/to/model.gguf \
-  --character goku
+  --character kestrel
 ```
 
 Or against an OpenAI-compatible API (the key is read from an env var, never
@@ -72,12 +72,12 @@ passed on the command line):
 ```bash
 export HF_TOKEN=...   # your provider key
 npm run play -- \
-  --experience examples/goku-vs-venom \
+  --experience examples/blackline-action \
   --backend api \
-  --api-base-url https://router.huggingface.co/v1 \
-  --api-model meta-llama/Llama-3.1-8B-Instruct \
-  --api-key-env HF_TOKEN \
-  --character goku
+  --api-base-url https://openrouter.ai/api/v1 \
+  --api-model qwen/qwen-2.5-72b-instruct \
+  --api-key-env OPENROUTER_API_KEY \
+  --character kestrel
 ```
 
 **Run the HTTP server** (the backend for the web frontend; picks its model at

@@ -305,7 +305,7 @@ including its full `characters` roster (`{id, name}[]`) so a client can
 offer a real "play as X" picker rather than asking the player to type an
 id. Selecting a package (`POST /api/experiences/select`,
 `{id, characterId?}`) swaps the current dir/dbPath (each package keeps
-its own `dtm.sqlite`, so switching back later resumes that Experience's
+its own `dtm.json`, so switching back later resumes that Experience's
 own history) and resolves the player character: an explicit `characterId`
 wins outright if it names a sheet in the target Experience (400 if it
 doesn't); otherwise the existing fallback chain applies — the
@@ -334,8 +334,8 @@ uncompressed-size cap (50MB), and a raw-body cap upstream in `server/`
 plausibly produce are accepted (files at the archive root, or under one
 top-level folder). The extracted package is validated by *actually
 loading it* before installation — an import that succeeds is guaranteed
-selectable — any accidentally-zipped `dtm.sqlite` is stripped (runtime
-state never ships with content), and it's installed at
+selectable — any accidentally-zipped `dtm.json` (or legacy `dtm.sqlite`) is
+stripped (runtime state never ships with content), and it's installed at
 `<experiencesDir>/<experienceId>`, rejecting a duplicate id rather than
 silently overwriting. The frontend's Experiences dialog (opened from
 the topbar Experience name) lists/switches packages and uploads a .zip —
@@ -390,32 +390,32 @@ an event-sourcing pattern — DTM is the single source of truth.
 
 #### Storage Format
 
-- **SQLite** — a single embedded file DB. Works natively on desktop/server
-  (and offline); a web target would need a WASM build (e.g. sql.js) or a
-  backend proxy, deferred until web support is built.
-- **Schema:** a single `dtm_events` table — typed common columns for fields
-  every event shares (queryable/indexable), plus a `payload` JSON column
-  for event-type-specific extras:
+- **A plain JSON file** — `dtm.json` next to the Experience package, holding an
+  array of event objects. The whole log is held in memory and rewritten on each
+  append. This is dependency-free (no `node:sqlite`, no native/WASM build, no
+  ORM), portable to any target that can read/write a file, and a fit for this
+  beta's single-session-per-process scope. It also sidesteps SQLite's strict
+  parameter binding, which previously crashed a turn whenever an event field
+  came through `undefined` (e.g. a dropped timestamp).
+- **Event shape:** each event is one JSON object with common top-level fields
+  plus a free-form `payload` for event-type-specific extras:
 
-  | Column | Type | Notes |
+  | Field | Type | Notes |
   |---|---|---|
-  | `id` | INTEGER PK | autoincrement, ordering tiebreaker |
-  | `experience_id` | TEXT | scopes events to a single Experience/playthrough |
-  | `timestamp` | INTEGER | in-game/engine time, not wall clock |
-  | `type` | TEXT | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"`, `"hazard.noted"`, `"turn.audited"`, `"item.consumed"`, `"item.toggled"` |
-  | `entity_id` | TEXT, nullable | character/NPC/item the event concerns, if any |
-  | `node_id` | TEXT, nullable | node the event occurred at, if applicable |
-  | `position_x` / `position_y` | INTEGER, nullable | for entity/item position-update events |
-  | `payload` | TEXT (JSON) | event-type-specific extra data |
+  | `id` | number | monotonically increasing, ordering tiebreaker |
+  | `experienceId` | string | scopes events to a single Experience/playthrough |
+  | `timestamp` | number | in-game/engine (timeline) time, not wall clock |
+  | `type` | string | open string event type — beta's vocabulary (see Beta Implementation below): `"entity.moved"`, `"technique.used"`, `"character.interacted"`, `"character.said"`, `"action.rejected"`, `"debuff.applied"`, `"hazard.noted"`, `"turn.audited"`, `"item.consumed"`, `"item.toggled"` |
+  | `entityId` | string \| null | character/NPC/item the event concerns, if any |
+  | `nodeId` | string \| null | node the event occurred at, if applicable |
+  | `positionX` / `positionY` | number \| null | for entity/item position-update events |
+  | `payload` | any (JSON) \| null | event-type-specific extra data |
 
-  Indexed on `experience_id`, `timestamp`, `entity_id`, and `type` for the
-  query patterns `state/` and `ai/` summarization need (e.g. "everything
-  for this character since timestamp X").
-- **Query interface:** `src/dtm/index.ts`'s `Dtm` class wraps Node's built-in
-  `node:sqlite` (`DatabaseSync`) directly — no ORM. Exposes `append`,
-  `allForExperience`, `forEntity`, `recent`, and `lastPosition` (the last
-  position-bearing event for an entity, used by `state/` to derive current
-  location).
+- **Query interface:** `src/dtm/index.ts`'s `Dtm` class holds the events in an
+  array and answers queries with in-memory filter/sort — no indexes needed at
+  this scale. Exposes `append`, `allForExperience`, `forEntity`, `recent`,
+  `lastPosition` (the last position-bearing event for an entity, used by
+  `state/` to derive current location), and `lastScheduledTurn`.
 
 ### State
 

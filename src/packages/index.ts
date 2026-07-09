@@ -222,8 +222,8 @@ async function findPackageRoot(extractedDir: string): Promise<string> {
  * (guarded — see extractZip/safeEntryPath), validates the whole package
  * by actually loading it (the same loadExperience used at runtime, so an
  * import that succeeds is guaranteed selectable), strips any runtime
- * dtm.sqlite the author accidentally zipped up (session state never
- * ships with content), then installs it at `<destRoot>/<experienceId>`.
+ * dtm.json (or legacy dtm.sqlite) the author accidentally zipped up (session
+ * state never ships with content), then installs it at `<destRoot>/<experienceId>`.
  * Rejects if a package with the same id is already installed there —
  * imports never silently overwrite.
  */
@@ -233,6 +233,7 @@ export async function importPackageZip(zipBuffer: Buffer, destRoot: string): Pro
     await extractZip(zipBuffer, tempDir);
     const packageRoot = await findPackageRoot(tempDir);
 
+    await rm(join(packageRoot, "dtm.json"), { force: true });
     await rm(join(packageRoot, "dtm.sqlite"), { force: true });
 
     const loaded = await loadExperience(packageRoot);

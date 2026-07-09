@@ -272,7 +272,7 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
       id: loaded.experience.id,
       name: loaded.experience.name,
       dir,
-      dbPath: join(dir, "dtm.sqlite"),
+      dbPath: join(dir, "dtm.json"),
       playerCharacterId,
     };
     if (engine && status.status === "ready" && lastBackend) {

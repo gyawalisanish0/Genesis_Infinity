@@ -24,9 +24,11 @@ jobs:
           mkdir -p /tmp/server-space
           cp package.json tsconfig.json /tmp/server-space/
           cp -r src /tmp/server-space/src
-          mkdir -p /tmp/server-space/examples/goku-vs-venom/characters
-          cp examples/goku-vs-venom/characters/*.json /tmp/server-space/examples/goku-vs-venom/characters/
-          cp examples/goku-vs-venom/experience.json examples/goku-vs-venom/world.json /tmp/server-space/examples/goku-vs-venom/
+          # Ship every bundled example experience so they all appear in the
+          # frontend's Experiences picker (the server scans examples/). Exclude
+          # any local runtime dtm logs.
+          cp -r examples /tmp/server-space/examples
+          find /tmp/server-space/examples -name 'dtm.json' -delete
           cp deploy/hf-space-server/Dockerfile /tmp/server-space/Dockerfile
           cp deploy/hf-space-server/README.md /tmp/server-space/README.md
 

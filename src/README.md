@@ -26,7 +26,7 @@ events.
 | Module | Responsibility |
 |---|---|
 | `data/` | Zod schemas + loaders for Experience packages (world, characters, ruleset). |
-| `dtm/` | The event log — an append-only SQLite record ("what happened"). |
+| `dtm/` | The event log — an append-only JSON record ("what happened"). |
 | `state/` | Derives current world state (positions, HP, inventory, active effects) from the event log. |
 | `scope/` | Builds the AI-visible payload for a turn — only what the acting character can perceive. |
 | `tools/` | The gated tool/action definitions the model calls (move, use technique, interact, say, checks). |

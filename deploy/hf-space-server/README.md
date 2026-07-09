@@ -33,9 +33,10 @@ registry — adding a new provider there (base URL + a new key env var) makes it
 available to every deployment without any frontend changes.
 
 Optional: `EXPERIENCE_DIR` (the bootstrap Experience, defaults to
-`examples/goku-vs-venom`; its parent directory is always scanned as an
-Experience-package discovery root too — see below), `CHARACTER_ID`
-(defaults to `goku` — only used as a fallback if the selected Experience
+`examples/blackline-action`; its parent directory is always scanned as an
+Experience-package discovery root too, so every package under `examples/`
+appears in the picker — see below), `CHARACTER_ID`
+(defaults to `kestrel` — only used as a fallback if the selected Experience
 doesn't declare its own `playerCharacterId` and this id isn't found on
 its sheet), `MODELS_DIR` (defaults to `models` — where a frontend-picked
 local GGUF is cached; only one is kept on disk at a time), `DEBUG`
