@@ -19,11 +19,22 @@ an ongoing upstream-merge tax). It's deployed as-is to GitHub Pages (see
 
 ## Connection settings
 
-API base URL and shared secret (`X-Api-Key`) are entered once via a
-`<dialog>` and cached in `localStorage` (`genesis-infinity-connection`)
-so a returning visitor reconnects automatically. `apiFetch()` is the one
-place that attaches the `X-Api-Key` header and unwraps `{error}` JSON
-bodies into thrown `Error`s.
+API base URL and shared secret (`X-Api-Key`) are cached in `localStorage`
+(`genesis-infinity-connection`) so a returning visitor reconnects
+automatically. `apiFetch()` is the one place that attaches the `X-Api-Key`
+header and unwraps `{error}` JSON bodies into thrown `Error`s.
+
+**First-visit UX (demo-oriented):** a visitor with no saved connection is
+*not* shown the settings form — the app falls back to a baked-in default
+base URL (`DEFAULT_BASE_URL`, the hosted demo Space) and **auto-connects**,
+so there's no wall on arrival. The ⚙ settings dialog still lets anyone point
+at a different server (a failed auto-connect reopens it automatically). A
+one-time **welcome/tutorial** `<dialog>` (gated on the
+`genesis-infinity-welcomed` localStorage flag, re-openable via the topbar
+`?` button) explains the 4-step flow, and dismissing it briefly pulses the
+world-picker. Paired with the server's optional preset model
+(`DEFAULT_API_MODEL`, auto-loaded at boot), a first-time visitor can reach a
+playable turn without touching settings.
 
 This dialog used to also ask for a "Character id" text field — removed,
 since the server never actually read it (`GET /api/scope` ignored the

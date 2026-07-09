@@ -13,9 +13,9 @@ http
   });
 
 const turns = [
-  "Goku looks around and asks what is nearby.",
-  "Goku attempts to use his Kamehameha technique on Venom.",
-  "Goku drinks a health potion.",
+  "Kestrel looks around the helipad and checks what's nearby.",
+  "Kestrel uses a grapnel swing to reach the executive floor.",
+  "Kestrel injects an adrenaline shot.",
 ];
 
 const child = spawn(
@@ -25,11 +25,11 @@ const child = spawn(
     "play",
     "--",
     "--experience",
-    "examples/goku-vs-venom",
+    "examples/blackline-action",
     "--model",
     "models/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
     "--character",
-    "goku",
+    "kestrel",
     "--debug",
   ],
   { stdio: ["pipe", "inherit", "inherit"] },

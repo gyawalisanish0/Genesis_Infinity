@@ -105,7 +105,7 @@ function parseArgs(argv: string[]): Args {
   return {
     experienceDir: raw.experienceDir,
     characterId: raw.characterId,
-    dbPath: raw.dbPath ?? `${raw.experienceDir}/dtm.sqlite`,
+    dbPath: raw.dbPath ?? `${raw.experienceDir}/dtm.json`,
     debug: raw.debug,
     backend,
   };

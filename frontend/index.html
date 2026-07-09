@@ -25,6 +25,7 @@
           <span class="dot" id="model-dot"></span>
           <span id="model-status-text">No model</span>
         </button>
+        <button id="help-btn" class="icon-btn" title="How to play" aria-label="How to play">?</button>
         <button id="settings-btn" class="icon-btn" title="Connection settings" aria-label="Connection settings">⚙</button>
       </div>
     </header>
@@ -83,6 +84,21 @@
     </div>
     <div class="dialog-actions">
       <button type="button" id="character-dialog-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="welcome-dialog">
+    <div class="welcome-mark" aria-hidden="true">GENES<i class="gi">I</i>S&nbsp;<i class="gi">I</i>NF<i class="gi">I</i>N<i class="gi">I</i>TY</div>
+    <p class="welcome-tagline">Author the world. The engine plays it.</p>
+    <p class="welcome-lead">A tiny AI-run tabletop RPG. Pick a world, say what your character does in plain English, and the engine adjudicates and narrates what happens.</p>
+    <ol class="welcome-steps">
+      <li><span class="welcome-step-n">1</span><span class="welcome-step-body"><strong>Pick a world.</strong> Tap the title up top to choose an Experience — action, fantasy, sci-fi, romance, medieval, or cyberpunk.</span></li>
+      <li><span class="welcome-step-n">2</span><span class="welcome-step-body"><strong>Wait for the model.</strong> The dot by the model name turns green when it's ready.</span></li>
+      <li><span class="welcome-step-n">3</span><span class="welcome-step-body"><strong>Take a turn.</strong> Type what your character <em>does</em> (“sprint to the rooftop and grapple across”) — not a command. The engine decides if it works.</span></li>
+      <li><span class="welcome-step-n">4</span><span class="welcome-step-body"><strong>Check your sheet.</strong> The person icon in the message bar opens your HP, location, and inventory.</span></li>
+    </ol>
+    <div class="dialog-actions">
+      <button type="button" id="welcome-start">Start playing</button>
     </div>
   </dialog>
 

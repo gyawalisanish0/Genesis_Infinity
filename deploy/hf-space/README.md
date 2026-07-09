@@ -12,7 +12,7 @@ pinned: false
 
 Runs the Genesis Infinity engine's CLI (`npm run play`) against a real
 Llama-3.2-3B-Instruct-Q4_K_M model on this Space's CPU, scripting three
-turns (scope check, technique use, item use) through the Goku vs Venom
+turns (scope check, technique use, item use) through the `blackline-action`
 example Experience. Output is visible in this Space's container logs —
 there is no interactive UI. The HTTP endpoint on port 7860 only exists to
 satisfy the Space's health check.

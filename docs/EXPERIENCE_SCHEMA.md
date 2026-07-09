@@ -31,7 +31,7 @@ my-experience/
 - **`experience.json`** and **`world.json`** are required, exactly one each.
 - **`characters/`** holds one `*.json` file per character. The filename is
   cosmetic; the character's `id` field is what everything references.
-- A `dtm.sqlite` file appears next to these once the Experience is played —
+- A `dtm.json` file appears next to these once the Experience is played —
   it's the derived event log (positions, HP, inventory changes over time).
   Don't author it; don't ship it. It's created on first run.
 

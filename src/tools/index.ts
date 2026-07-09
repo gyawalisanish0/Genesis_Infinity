@@ -106,9 +106,9 @@ export function getCharacterSheetTool(
  * declared optional in the tool's JSON schema (no sensible one-size-fits-all
  * required value), so a model omitting it is expected, valid input, not a
  * malformed call — defaults to DEFAULT_RECENT_DTM_LIMIT rather than passing
- * `undefined` through to dtm's `LIMIT ?` bind, which node:sqlite rejects
- * outright ("Provided value cannot be bound to SQLite parameter 2"),
- * observed live with a model that omitted it.
+ * `undefined` through to dtm's `recent()`, which would otherwise slice to an
+ * empty result (and, on the former SQLite-backed dtm, crashed the turn
+ * outright). Observed live with a model that omitted it.
  */
 const DEFAULT_RECENT_DTM_LIMIT = 20;
 

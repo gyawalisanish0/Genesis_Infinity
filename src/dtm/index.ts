@@ -1,8 +1,8 @@
-import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 /**
- * A single DTM event as read back from storage. Mirrors the dtm_events
- * schema documented in docs/BACKEND_ARCHITECTURE.md.
+ * A single DTM event as read back from storage. Mirrors the on-disk JSON
+ * event shape documented in docs/BACKEND_ARCHITECTURE.md.
  */
 export interface DtmEvent {
   id: number;
@@ -26,115 +26,99 @@ export interface DtmEventInput {
   payload?: unknown;
 }
 
-function toNullableString(value: SQLOutputValue): string | null {
-  return value === null ? null : String(value);
+/** Newest-first ordering: later timestamp wins, ties broken by later id. */
+function byRecency(a: DtmEvent, b: DtmEvent): number {
+  return b.timestamp - a.timestamp || b.id - a.id;
 }
 
-function toNullableNumber(value: SQLOutputValue): number | null {
-  return value === null ? null : Number(value);
-}
-
-function rowToEvent(row: Record<string, SQLOutputValue>): DtmEvent {
-  const payload = row.payload;
-  return {
-    id: Number(row.id),
-    experienceId: String(row.experience_id),
-    timestamp: Number(row.timestamp),
-    type: String(row.type),
-    entityId: toNullableString(row.entity_id),
-    nodeId: toNullableString(row.node_id),
-    positionX: toNullableNumber(row.position_x),
-    positionY: toNullableNumber(row.position_y),
-    payload: payload === null ? null : JSON.parse(String(payload)),
-  };
+/** Oldest-first ordering: earlier timestamp wins, ties broken by earlier id. */
+function byChronology(a: DtmEvent, b: DtmEvent): number {
+  return a.timestamp - b.timestamp || a.id - b.id;
 }
 
 /**
  * The engine's memory system: an append-only, timestamped event log.
  * Single source of truth — state/ is a derived view computed from this.
+ *
+ * Backed by a plain JSON file (an array of DtmEvent). The whole log is held
+ * in memory and rewritten on each append — simple, dependency-free, and a fit
+ * for this single-session-per-process beta (see docs/BACKEND_ARCHITECTURE.md).
+ * The path is still called `dbPath` for call-site compatibility; it points at
+ * a `.json` file.
  */
 export class Dtm {
-  private readonly db: DatabaseSync;
+  private readonly path: string;
+  private readonly events: DtmEvent[];
+  private nextId: number;
 
   constructor(dbPath: string) {
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS dtm_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        experience_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        entity_id TEXT,
-        node_id TEXT,
-        position_x INTEGER,
-        position_y INTEGER,
-        payload TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_dtm_experience ON dtm_events(experience_id);
-      CREATE INDEX IF NOT EXISTS idx_dtm_timestamp ON dtm_events(timestamp);
-      CREATE INDEX IF NOT EXISTS idx_dtm_entity ON dtm_events(entity_id);
-      CREATE INDEX IF NOT EXISTS idx_dtm_type ON dtm_events(type);
-    `);
+    this.path = dbPath;
+    this.events = [];
+    this.nextId = 1;
+
+    if (existsSync(dbPath)) {
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(dbPath, "utf-8"));
+        if (Array.isArray(parsed)) {
+          this.events = parsed as DtmEvent[];
+          this.nextId = this.events.reduce((max, e) => Math.max(max, e.id), 0) + 1;
+        }
+      } catch {
+        // A missing/empty/corrupt file just means an empty log — start fresh
+        // rather than crash a playthrough on a bad or partially-written file.
+      }
+    }
+  }
+
+  private persist(): void {
+    writeFileSync(this.path, JSON.stringify(this.events, null, 2));
   }
 
   /** Appends a new event. Never updates or deletes — DTM is append-only. */
   append(event: DtmEventInput): number {
-    const stmt = this.db.prepare(`
-      INSERT INTO dtm_events
-        (experience_id, timestamp, type, entity_id, node_id, position_x, position_y, payload)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      event.experienceId,
-      event.timestamp,
-      event.type,
-      event.entityId ?? null,
-      event.nodeId ?? null,
-      event.position?.x ?? null,
-      event.position?.y ?? null,
-      event.payload !== undefined ? JSON.stringify(event.payload) : null,
-    );
-    return Number(result.lastInsertRowid);
+    const stored: DtmEvent = {
+      id: this.nextId++,
+      experienceId: event.experienceId,
+      timestamp: event.timestamp,
+      type: event.type,
+      entityId: event.entityId ?? null,
+      nodeId: event.nodeId ?? null,
+      positionX: event.position?.x ?? null,
+      positionY: event.position?.y ?? null,
+      payload: event.payload ?? null,
+    };
+    this.events.push(stored);
+    this.persist();
+    return stored.id;
   }
 
   /** All events for an Experience/playthrough, oldest first. */
   allForExperience(experienceId: string): DtmEvent[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM dtm_events WHERE experience_id = ? ORDER BY timestamp ASC, id ASC`)
-      .all(experienceId);
-    return rows.map(rowToEvent);
+    return this.events.filter((e) => e.experienceId === experienceId).sort(byChronology);
   }
 
   /** All events concerning a specific entity, oldest first. */
   forEntity(experienceId: string, entityId: string): DtmEvent[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM dtm_events WHERE experience_id = ? AND entity_id = ? ORDER BY timestamp ASC, id ASC`,
-      )
-      .all(experienceId, entityId);
-    return rows.map(rowToEvent);
+    return this.events
+      .filter((e) => e.experienceId === experienceId && e.entityId === entityId)
+      .sort(byChronology);
   }
 
   /** The most recent N events for an Experience, newest first. */
   recent(experienceId: string, limit: number): DtmEvent[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM dtm_events WHERE experience_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?`,
-      )
-      .all(experienceId, limit);
-    return rows.map(rowToEvent);
+    return this.events
+      .filter((e) => e.experienceId === experienceId)
+      .sort(byRecency)
+      .slice(0, Math.max(0, limit));
   }
 
   /** The most recent position-bearing event for an entity, if any (used by state/). */
   lastPosition(experienceId: string, entityId: string): DtmEvent | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM dtm_events
-         WHERE experience_id = ? AND entity_id = ? AND node_id IS NOT NULL
-         ORDER BY timestamp DESC, id DESC LIMIT 1`,
-      )
-      .get(experienceId, entityId);
-    return row ? rowToEvent(row) : null;
+    return (
+      this.events
+        .filter((e) => e.experienceId === experienceId && e.entityId === entityId && e.nodeId !== null)
+        .sort(byRecency)[0] ?? null
+    );
   }
 
   /**
@@ -145,17 +129,16 @@ export class Dtm {
    * scheduler/ treats them as due immediately.
    */
   lastScheduledTurn(experienceId: string, entityId: string): DtmEvent | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM dtm_events
-         WHERE experience_id = ? AND entity_id = ? AND type = 'turn.scheduled'
-         ORDER BY timestamp DESC, id DESC LIMIT 1`,
-      )
-      .get(experienceId, entityId);
-    return row ? rowToEvent(row) : null;
+    return (
+      this.events
+        .filter(
+          (e) => e.experienceId === experienceId && e.entityId === entityId && e.type === "turn.scheduled",
+        )
+        .sort(byRecency)[0] ?? null
+    );
   }
 
   close(): void {
-    this.db.close();
+    // No open handle to release — every append writes through synchronously.
   }
 }

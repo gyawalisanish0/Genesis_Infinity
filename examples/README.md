@@ -32,7 +32,7 @@ Every Experience is a directory with the same three-part shape:
 └── characters/       # one CharacterSheet per file
 ```
 
-A `dtm.sqlite` file appears next to these once a package has been played —
+A `dtm.json` file appears next to these once a package has been played —
 that's the derived event log, created on first run. It isn't authored and
 isn't part of the shipped package.
 
