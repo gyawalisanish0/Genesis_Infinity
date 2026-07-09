@@ -24,6 +24,7 @@ Configure via this Space's **Settings → Repository secrets**:
 | `CORS_ORIGIN` | The GitHub Pages origin allowed to call this API (e.g. `https://<user>.github.io`) |
 | `HF_API_KEY` | Optional. A Hugging Face access token — enables "Hugging Face" as an API provider option in the frontend's model picker. |
 | `OPENROUTER_API_KEY` | Optional. An OpenRouter API key — enables "OpenRouter" as an API provider option. |
+| `DEFAULT_API_PROVIDER` / `DEFAULT_API_MODEL` | Optional. Preset a model to **auto-load at boot** so a first-time visitor can play immediately with no setup — e.g. `openrouter` + `qwen/qwen-2.5-72b-instruct`. Requires the matching provider key above. Pick a model that reliably does native tool-calling (an *instruct* model, not a "reasoning"/R1 one). **⚠️ Cost/abuse:** with a preset paid model, a public frontend, and no `SERVER_API_KEY`, anyone with the URL drives turns on your key — use a free model, set an OpenRouter spend cap, or keep `SERVER_API_KEY` set. |
 
 Each API provider is enabled independently by setting its key — set one, both,
 or neither (local GGUF models via the frontend's picker work either way). The

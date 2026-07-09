@@ -46,6 +46,14 @@ export interface ServerOptions {
   /** Where downloaded GGUF files are cached. Defaults to "models". */
   modelsDir?: string;
   /**
+   * Optional preset API model to auto-load at boot, so a first-time visitor
+   * (e.g. on the hosted demo) can play immediately without opening the model
+   * picker. Applied only if its `provider` is configured in `apiProviders`;
+   * loaded fire-and-forget after the port binds (same status-polling contract
+   * as POST /api/backend), so a slow/failed load never blocks startup.
+   */
+  defaultApiModel?: { provider: ApiProviderId; model: string };
+  /**
    * Server-side equivalent of io/cli.ts's --debug flag: logs each turn's
    * input, tool calls (name, params, result), and final narration to the
    * process's console — visible in the container logs of a deployed Space,
@@ -717,6 +725,26 @@ export async function startServer(options: ServerOptions): Promise<{ close: () =
   // reach — leaving the Space stuck at "starting".
   await new Promise<void>((resolve) => server.listen(options.port, "0.0.0.0", resolve));
   console.log(`Genesis Infinity API server listening on 0.0.0.0:${options.port}`);
+
+  // Preset demo model: if configured, load it fire-and-forget now that the
+  // port is bound, so a first-time visitor lands on a ready model with no
+  // setup. Skipped silently if its provider has no key configured.
+  const preset = options.defaultApiModel;
+  if (preset) {
+    const configured = options.apiProviders?.[preset.provider];
+    if (configured) {
+      console.log(`[server] Auto-loading preset model ${preset.provider}/${preset.model}`);
+      void setBackend(
+        { type: "api", baseURL: configured.baseURL, apiKey: configured.apiKey, model: preset.model },
+        { status: "ready", backend: { type: "api", provider: preset.provider, model: preset.model } },
+      );
+    } else {
+      console.warn(
+        `[server] DEFAULT_API_MODEL set to ${preset.provider}/${preset.model}, but provider ` +
+          `"${preset.provider}" has no key configured — starting with no model loaded.`,
+      );
+    }
+  }
 
   return {
     async close() {

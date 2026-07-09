@@ -1,5 +1,10 @@
 const STORAGE_KEY = "genesis-infinity-connection";
 const PROFILES_KEY = "genesis-infinity-model-profiles";
+const WELCOME_KEY = "genesis-infinity-welcomed";
+// The hosted demo server. Used as the default base URL so a first-time
+// visitor connects automatically instead of being met with a settings form;
+// the ⚙ settings dialog still lets anyone point at a different server.
+const DEFAULT_BASE_URL = "https://gyawalisanish0-genesis-infinity-server.hf.space";
 
 const el = {
   statusDot: document.getElementById("status-dot"),
@@ -30,9 +35,12 @@ const el = {
   input: document.getElementById("input"),
   sendBtn: document.getElementById("send-btn"),
   settingsBtn: document.getElementById("settings-btn"),
+  helpBtn: document.getElementById("help-btn"),
   settingsDialog: document.getElementById("settings-dialog"),
   settingsForm: document.getElementById("settings-form"),
   settingsCancel: document.getElementById("settings-cancel"),
+  welcomeDialog: document.getElementById("welcome-dialog"),
+  welcomeStart: document.getElementById("welcome-start"),
   settingBaseUrl: document.getElementById("setting-base-url"),
   settingApiKey: document.getElementById("setting-api-key"),
   modelBtn: document.getElementById("model-btn"),
@@ -612,6 +620,42 @@ function openSettings() {
   el.settingsDialog.showModal();
 }
 
+// First-run tutorial. Shown once (gated on localStorage) so returning visitors
+// aren't nagged; re-openable any time via the "?" button in the topbar.
+function showWelcome() {
+  el.welcomeDialog.showModal();
+}
+
+function maybeShowWelcome() {
+  let seen = false;
+  try {
+    seen = localStorage.getItem(WELCOME_KEY) === "1";
+  } catch {
+    // Private-mode / storage disabled — just show it, no persistence.
+  }
+  if (!seen) showWelcome();
+}
+
+el.welcomeStart.addEventListener("click", () => {
+  el.welcomeDialog.close();
+  try {
+    localStorage.setItem(WELCOME_KEY, "1");
+  } catch {
+    // Non-fatal — the welcome just reappears next load.
+  }
+  // Nudge first-timers toward the world picker once they dismiss the intro.
+  showFirstRunHint();
+});
+
+el.helpBtn.addEventListener("click", showWelcome);
+
+// A brief, self-clearing nudge toward the world picker for first-timers.
+function showFirstRunHint() {
+  el.experienceBtn.classList.add("hint-pulse");
+  addMessage("Tip: tap the title above to choose a world, then type what your character does in the box below.", "system");
+  setTimeout(() => el.experienceBtn.classList.remove("hint-pulse"), 9000);
+}
+
 function openModelDialog() {
   pollBackendStatus();
   el.modelDialog.showModal();
@@ -1151,9 +1195,10 @@ el.composer.addEventListener("submit", async (event) => {
 
 renderProfiles({ status: "idle" });
 
-connection = loadConnection();
-if (connection) {
-  connect();
-} else {
-  openSettings();
-}
+// First-run tutorial: shown once, before we drop the visitor into the demo.
+maybeShowWelcome();
+
+// Auto-connect: use a saved connection if there is one, otherwise fall back to
+// the hosted demo server so there's no connection wall on a first visit.
+connection = loadConnection() ?? { baseUrl: DEFAULT_BASE_URL, apiKey: "" };
+connect();

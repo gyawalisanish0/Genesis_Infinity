@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { startServer } from "./index.js";
-import { KNOWN_API_PROVIDERS, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
+import { KNOWN_API_PROVIDERS, isKnownApiProvider, type ApiProviderId, type ConfiguredApiProvider } from "./apiProviders.js";
 
 /**
  * Entry point for the always-on API server deployment (see
@@ -48,6 +48,19 @@ async function main(): Promise<void> {
     );
   }
 
+  // Optional preset demo model, auto-loaded at boot so a first-time visitor
+  // can play immediately. Requires both env vars, and the provider's key.
+  const defaultProvider = process.env.DEFAULT_API_PROVIDER;
+  const defaultModel = process.env.DEFAULT_API_MODEL;
+  let defaultApiModel: { provider: ApiProviderId; model: string } | undefined;
+  if (defaultProvider && defaultModel) {
+    if (isKnownApiProvider(defaultProvider)) {
+      defaultApiModel = { provider: defaultProvider, model: defaultModel };
+    } else {
+      console.warn(`[server] DEFAULT_API_PROVIDER "${defaultProvider}" is not a known provider — ignoring preset model.`);
+    }
+  }
+
   await startServer({
     experienceDir,
     dbPath: `${experienceDir}/dtm.json`,
@@ -58,6 +71,7 @@ async function main(): Promise<void> {
     apiProviders,
     modelsDir: process.env.MODELS_DIR ?? "models",
     experiencesDir: process.env.EXPERIENCES_DIR ?? "experiences",
+    defaultApiModel,
     debug,
   });
 }
