@@ -137,10 +137,14 @@ export type PointBuy = z.infer<typeof PointBuySchema>;
  */
 export const CustomCharacterConfigSchema = z.object({
   startingNodeId: z.string(),
-  hitPoints: z.object({ max: z.number().int().positive() }),
-  armorClass: z.number(),
-  abilityPointBuy: PointBuySchema,
-  skillPointBuy: PointBuySchema,
+  // All mechanical fields are optional: an Experience can offer custom
+  // characters that carry no hit points, no armor class, and no point-buy
+  // allocation at all — a name and a starting node are enough. Omitted
+  // point-buy pools simply mean that category isn't player-allocated.
+  hitPoints: z.object({ max: z.number().int().positive() }).optional(),
+  armorClass: z.number().optional(),
+  abilityPointBuy: PointBuySchema.optional(),
+  skillPointBuy: PointBuySchema.optional(),
 });
 export type CustomCharacterConfig = z.infer<typeof CustomCharacterConfigSchema>;
 

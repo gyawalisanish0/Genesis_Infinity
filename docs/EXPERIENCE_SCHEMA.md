@@ -31,6 +31,41 @@ my-experience/
 - **`experience.json`** and **`world.json`** are required, exactly one each.
 - **`characters/`** holds one `*.json` file per character. The filename is
   cosmetic; the character's `id` field is what everything references.
+
+### Almost everything is optional
+
+Only **identity and references** are mandatory — ids, names, and any id that
+has to resolve (a placement's `characterId`, an edge's `targetNodeId`, a
+technique's `effectId`). Every piece of *mechanical machinery* is optional and
+defaults sensibly, so you never have to invent numbers your story doesn't use.
+
+A complete, playable package can be this small:
+
+```jsonc
+// experience.json
+{ "id": "minimal", "name": "A Quiet Room",
+  "characters": [{ "characterId": "someone", "startingNodeId": "room" }] }
+
+// world.json
+{ "id": "w", "name": "Nowhere",
+  "regions": [{ "id": "r", "name": "The Room",
+                "nodes": [{ "id": "room", "name": "A Room" }] }] }
+
+// characters/someone.json
+{ "id": "someone", "name": "Someone" }
+```
+
+**A character with no stats is valid.** `abilities`, `skills`, `techniques`,
+and `inventory` all default to empty, and `hitPoints`/`armorClass` may be
+omitted entirely. Resolution treats a missing skill as **+0**, so a statless
+character simply rolls a flat d20 against the DC — they play fine, they're
+just not mechanically specialized. Omit HP and there's no damage model for
+them at all, which is what a purely social or investigative story wants.
+
+Other fields that default rather than fail: node `description`/`type` (empty),
+node `localPosition` and region `position` (origin — no grid needed), region
+`worldType` (`open`), world `width`/`height` (`1`), inventory `quantity` (`1`),
+item `type` (`consumable`), effect `severity` (`1`), and every `description`.
 - A `dtm.json` file appears next to these once the Experience is played —
   it's the derived event log (positions, HP, inventory changes over time).
   Don't author it; don't ship it. It's created on first run.

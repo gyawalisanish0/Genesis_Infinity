@@ -41,8 +41,9 @@ export interface PackageInfo {
    * target, not the pool's own bounds).
    */
   customCharacter?: {
-    abilityPointBuy: PointBuy;
-    skillPointBuy: PointBuy;
+    /** Absent when this Experience doesn't let the player allocate that category at all. */
+    abilityPointBuy?: PointBuy;
+    skillPointBuy?: PointBuy;
     abilities: { id: string; name: string }[];
     skills: { id: string; name: string }[];
   };
@@ -346,8 +347,15 @@ export async function createCustomCharacter(
     throw new Error("A custom character needs a name");
   }
 
-  const abilityValues = resolvePointBuyAllocation(config.abilityPointBuy, loaded.ruleset.abilities, input.abilities, "ability");
-  const skillValues = resolvePointBuyAllocation(config.skillPointBuy, loaded.ruleset.skills, input.skills, "skill");
+  // An omitted point-buy pool means that category isn't player-allocated at
+  // all — the custom character simply has no abilities/skills, which is a
+  // valid sheet (see CharacterSheetSchema's defaults).
+  const abilityValues = config.abilityPointBuy
+    ? resolvePointBuyAllocation(config.abilityPointBuy, loaded.ruleset.abilities, input.abilities, "ability")
+    : null;
+  const skillValues = config.skillPointBuy
+    ? resolvePointBuyAllocation(config.skillPointBuy, loaded.ruleset.skills, input.skills, "skill")
+    : null;
 
   const id = generateCharacterId(input.name, new Set(loaded.characters.map((c) => c.id)));
   const sheet: CharacterSheet = CharacterSheetSchema.parse({
@@ -358,20 +366,24 @@ export async function createCustomCharacter(
     background: input.background,
     personality: input.personality,
     tone: input.tone,
-    abilities: loaded.ruleset.abilities.map((def) => ({
-      id: def.id,
-      name: def.name,
-      score: abilityValues.get(def.id)!,
-    })),
-    skills: loaded.ruleset.skills.map((def) => ({
-      id: def.id,
-      name: def.name,
-      governingAbilityId: def.governingAbilityId,
-      value: skillValues.get(def.id)!,
-    })),
+    abilities: abilityValues
+      ? loaded.ruleset.abilities.map((def) => ({
+          id: def.id,
+          name: def.name,
+          score: abilityValues.get(def.id)!,
+        }))
+      : [],
+    skills: skillValues
+      ? loaded.ruleset.skills.map((def) => ({
+          id: def.id,
+          name: def.name,
+          governingAbilityId: def.governingAbilityId,
+          value: skillValues.get(def.id)!,
+        }))
+      : [],
     techniques: [],
     inventory: [],
-    hitPoints: { current: config.hitPoints.max, max: config.hitPoints.max },
+    hitPoints: config.hitPoints ? { current: config.hitPoints.max, max: config.hitPoints.max } : undefined,
     armorClass: config.armorClass,
   });
 

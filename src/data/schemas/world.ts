@@ -64,10 +64,13 @@ export type Edge = z.infer<typeof EdgeSchema>;
 export const NodeSchema = z.object({
   id: z.string(),
   name: z.string(),
-  description: z.string(),
-  type: z.string(),
+  // Descriptive only — a node is playable with just an id and a name.
+  description: z.string().default(""),
+  type: z.string().default(""),
   layer: z.number().int().optional(),
-  localPosition: PositionSchema,
+  // Defaults to the origin: an Experience whose places aren't laid out on a
+  // grid (a conversation, a set of scenes) needs no coordinates.
+  localPosition: PositionSchema.default({ x: 0, y: 0 }),
   environmentalCodes: EnvironmentalCodesSchema.optional(),
   connections: z.array(EdgeSchema).default([]),
 });
@@ -79,11 +82,11 @@ export type Node = z.infer<typeof NodeSchema>;
  */
 export const RegionSchema = z.object({
   id: z.string(),
-  position: PositionSchema,
+  position: PositionSchema.default({ x: 0, y: 0 }),
   name: z.string(),
   description: z.string().optional(),
   environmentalCodes: EnvironmentalCodesSchema.optional(),
-  worldType: WorldTypeSchema,
+  worldType: WorldTypeSchema.default("open"),
   nodes: z.array(NodeSchema).default([]),
 });
 export type Region = z.infer<typeof RegionSchema>;
@@ -92,8 +95,10 @@ export const WorldSchema = z
   .object({
     id: z.string(),
     name: z.string(),
-    width: z.number().int().positive(),
-    height: z.number().int().positive(),
+    // Grid extent is only meaningful for map-shaped worlds; a single-region
+    // or scene-based Experience can omit both.
+    width: z.number().int().positive().default(1),
+    height: z.number().int().positive().default(1),
     regions: z.array(RegionSchema).default([]),
   })
   .superRefine((world, ctx) => {

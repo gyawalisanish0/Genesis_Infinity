@@ -121,7 +121,7 @@ export type HitPoints = z.infer<typeof HitPointsSchema>;
 export const TechniqueDefSchema = z.object({
   id: z.string(),
   name: z.string(),
-  description: z.string(),
+  description: z.string().default(""),
   effectId: z.string().optional(),
   relocatesToTarget: z.boolean().optional(),
 });
@@ -152,8 +152,10 @@ export type TechniqueDef = z.infer<typeof TechniqueDefSchema>;
 export const EffectDefSchema = z.object({
   id: z.string(),
   name: z.string(),
-  description: z.string(),
-  severity: z.number().int().min(1).max(5),
+  description: z.string().default(""),
+  // Defaults to the mildest tier, so an effect is usable without the author
+  // reasoning about the escalation ceiling (see tools/'s rejectAction).
+  severity: z.number().int().min(1).max(5).default(1),
   armorClassDelta: z.number().int().optional(),
   maxHitPointsDelta: z.number().int().optional(),
   currentHitPointsDelta: z.number().int().optional(),
@@ -208,8 +210,10 @@ export const DEFAULT_EFFECTS: EffectDef[] = [
 export const ItemDefSchema = z.object({
   id: z.string(),
   name: z.string(),
-  description: z.string(),
-  type: z.enum(["consumable", "equipment"]),
+  description: z.string().default(""),
+  // Defaults to a plain carried item with no equip semantics — an author
+  // listing flavor gear shouldn't have to classify it.
+  type: z.enum(["consumable", "equipment"]).default("consumable"),
   armorClassDelta: z.number().int().optional(),
   maxHitPointsDelta: z.number().int().optional(),
   healAmount: z.number().int().positive().optional(),
@@ -248,7 +252,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
  */
 export const InventoryEntrySchema = z.object({
   itemId: z.string(),
-  quantity: z.number().int().nonnegative(),
+  quantity: z.number().int().nonnegative().default(1),
   equipped: z.boolean().optional(),
 });
 export type InventoryEntry = z.infer<typeof InventoryEntrySchema>;
@@ -293,8 +297,13 @@ export const CharacterSheetSchema = z
     personality: z.string().optional(),
     tone: z.string().optional(),
     plotPoints: z.array(CharacterPlotPointSchema).default([]),
-    abilities: z.array(AbilityScoreSchema),
-    skills: z.array(SkillSchema),
+    // Both default to empty: a character sheet needs no mechanical stats at
+    // all. A statless character still plays — resolution treats a missing
+    // skill as +0 (see ai/index.ts's resolveRoll), so they roll a flat d20,
+    // and a purely narrative Experience never has to invent numbers it
+    // doesn't use.
+    abilities: z.array(AbilityScoreSchema).default([]),
+    skills: z.array(SkillSchema).default([]),
     techniques: z.array(TechniqueDefSchema).default([]),
     inventory: z.array(InventoryEntrySchema).default([]),
     hitPoints: HitPointsSchema.optional(),
